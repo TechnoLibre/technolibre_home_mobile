@@ -103,6 +103,11 @@ export class HomeComponent extends EnhancedComponent {
           <span class="home-action-card__icon" aria-hidden="true">✏️</span>
           <span class="home-action-card__label" t-esc="t('label.new')"/>
         </button>
+        <button class="home-action-card" role="listitem" t-on-click="onCalendarClick"
+                t-att-aria-label="t('label.calendar')">
+          <span class="home-action-card__icon" aria-hidden="true">📅</span>
+          <span class="home-action-card__label" t-esc="t('label.calendar')"/>
+        </button>
         <button class="home-action-card" role="listitem" t-on-click="onServersClick"
                 t-att-aria-label="t('label.servers')">
           <span class="home-action-card__icon" aria-hidden="true">🖥️</span>
@@ -281,6 +286,10 @@ export class HomeComponent extends EnhancedComponent {
 
     onNoteClick(id: string) {
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: `/note/${id}`});
+    }
+
+    onCalendarClick() {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/activities"});
     }
 
     onServersClick() {

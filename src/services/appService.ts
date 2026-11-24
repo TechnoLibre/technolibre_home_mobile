@@ -1,6 +1,8 @@
 import { Application, ApplicationID } from "../models/application";
 import { AppAlreadyExistsError, NoAppMatchError } from "../js/errors";
 import { DatabaseService } from "./databaseService";
+import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
+
 
 export interface GetAppListResult {
   appList: Array<Application>;
@@ -82,6 +84,8 @@ export class AppService {
     }
 
     await this._db.deleteApplication(matchingApp.url, matchingApp.username);
+    // Its per-server entries no longer count in the notes' global status
+    await this._db.refreshAllNoteSyncStatuses();
     return true;
   }
 
@@ -120,6 +124,19 @@ export class AppService {
       appID.username,
       Object.assign({}, newApp)
     );
+    // Sync records are keyed "url|username|database". They follow the
+    // application only when it still names the same server, user and
+    // database (url spelled differently): a remote id means nothing
+    // elsewhere, so other edits leave them behind, non-live, and the next
+    // push creates new records.
+    if (appID.username === newApp.username && sameServerUrl(appID.url, newApp.url)
+      && appToEdit.database === newApp.database) {
+      await this._db.renameSyncConfigId(
+        syncConfigIdFor(appID.url, appID.username, appToEdit.database),
+        syncConfigIdFor(newApp.url, newApp.username, newApp.database)
+      );
+    }
+    await this._db.refreshAllNoteSyncStatuses();
     return true;
   }
 

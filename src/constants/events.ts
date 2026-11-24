@@ -13,6 +13,8 @@ export const Events: Record<string, string> = {
 	SET_INTENT: "set_intent",
 	SCROLL_TO_LAST_ENTRY: "scroll_to_last_entry",
 	SYNC_CHANGES_DETECTED: "sync_changes_detected",
+	/** A pull changed a note — detail { noteId }. */
+	NOTE_PULLED: "note_pulled",
 	DEV_MODE_UNLOCKED: "dev_mode_unlocked",
 	ADD_TRANSCRIPTION_TEXT: "add_transcription_text",
 	SET_ENTRY_TRANSCRIPTION: "set_entry_transcription",

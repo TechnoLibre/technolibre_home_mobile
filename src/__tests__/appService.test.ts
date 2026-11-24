@@ -109,6 +109,47 @@ describe("AppService with SQLite", () => {
       const apps = await appService.getApps();
       expect(apps[0].password).toBe("newpass");
     });
+
+    const linkOf = (configId: string) => ({
+      id: "l1", noteId: "n1", configId, model: "project.task", resId: 7,
+      kind: "create" as const, remoteState: "ok" as const, createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null,
+    });
+
+    it("moves sync links along when only the url's spelling changes", async () => {
+      await db.createNoteLinksTable();
+      await appService.add(baseApp({ database: "db" }));
+      await db.addNoteLink(linkOf("https://erp.example.com|admin|db"));
+
+      await appService.edit(
+        { url: "https://erp.example.com", username: "admin" },
+        baseApp({ url: "https://ERP.example.com/", database: "db" })
+      );
+      expect((await db.getNoteLinks("n1"))[0].configId).toBe("https://ERP.example.com/|admin|db");
+    });
+
+    it("leaves sync links behind when the database changes", async () => {
+      await db.createNoteLinksTable();
+      await appService.add(baseApp({ database: "db" }));
+      await db.addNoteLink(linkOf("https://erp.example.com|admin|db"));
+
+      await appService.edit(
+        { url: "https://erp.example.com", username: "admin" },
+        baseApp({ database: "otherdb" })
+      );
+      expect((await db.getNoteLinks("n1"))[0].configId).toBe("https://erp.example.com|admin|db");
+    });
+
+    it("leaves sync links behind when the url names another server", async () => {
+      await db.createNoteLinksTable();
+      await appService.add(baseApp({ database: "db" }));
+      await db.addNoteLink(linkOf("https://erp.example.com|admin|db"));
+
+      await appService.edit(
+        { url: "https://erp.example.com", username: "admin" },
+        baseApp({ url: "https://other.example.com", database: "db" })
+      );
+      expect((await db.getNoteLinks("n1"))[0].configId).toBe("https://erp.example.com|admin|db");
+    });
   });
 
   describe("matches", () => {

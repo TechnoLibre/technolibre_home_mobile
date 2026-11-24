@@ -42,7 +42,11 @@ export class NoteEntryDeleteComponent extends EnhancedComponent {
 	`;
 
 	async onNoteEntryDeleteClick() {
-		const confirm: ConfirmResult = await Dialog.confirm({ message: `Supprimer cette entrée de ${ENV.LABEL_NOTE}?` });
+		const confirm: ConfirmResult = await Dialog.confirm({
+			message: `Supprimer cette entrée de ${ENV.LABEL_NOTE}?`,
+			okButtonTitle: this.t("button.confirm"),
+			cancelButtonTitle: this.t("button.cancel"),
+		});
 		if (confirm.value) {
 			this.props.deleteEntry(this.props.id);
 		}

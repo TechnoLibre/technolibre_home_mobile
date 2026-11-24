@@ -1,4 +1,4 @@
-import { useState, xml } from "@odoo/owl";
+import { onMounted, onPatched, useRef, useState, xml } from "@odoo/owl";
 import { Dialog } from "@capacitor/dialog";
 import { EnhancedComponent } from "../../../js/enhancedComponent";
 import { Events } from "../../../constants/events";
@@ -12,7 +12,8 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 				class="note-entry__text"
 				t-att-placeholder="t('placeholder.text')"
 				t-att-aria-label="t('aria.text_entry')"
-				t-model="props.params.text"
+				t-ref="text"
+				t-on-input="onInput"
 			></textarea>
 			<div class="note-entry-text__actions" t-if="props.params.text">
 				<button
@@ -51,6 +52,34 @@ export class NoteEntryTextComponent extends EnhancedComponent {
 			isTranslating:     false,
 			translatingTarget: null as "fr" | "en" | null,
 		});
+		onMounted(() => this.showText());
+		onPatched(() => this.showText());
+	}
+
+	private textRef = useRef("text");
+
+	/**
+	 * The field's value, put in place after a render only when the text
+	 * changed other than by typing (a pull, a merge, a transcription), with
+	 * the text as it is then. Bound by t-model, a render computed before a
+	 * keystroke and applied after it would put the older text back; written
+	 * at every render, a word the keyboard is still composing, not yet an
+	 * input event, would be lost.
+	 */
+	private showText() {
+		const el = this.textRef.el as HTMLTextAreaElement | null;
+		const text = this.props.params?.text ?? "";
+		if (!el || text === this.shownText) return;
+		this.shownText = text;
+		if (el.value !== text) el.value = text;
+	}
+
+	/** The text the field last showed or sent: see showText. */
+	private shownText: string | null = null;
+
+	onInput(ev: Event) {
+		this.shownText = (ev.target as HTMLTextAreaElement).value;
+		this.props.params.text = this.shownText;
 	}
 
 	async translateText(source: "fr" | "en", target: "fr" | "en") {

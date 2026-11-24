@@ -40,10 +40,19 @@ android {
         if (lanCleartext) {
             logger.warn("lanCleartext : APK de demonstration, HTTP en clair tolere par le systeme")
         }
+        // `-PsyncTest` produit l'app des tests de synchro d'ERPLibre
+        // (long_test/mobile_sync_device.py) : un autre paquet, donc d'autres
+        // donnees, a cote de l'app de l'utilisateur, qu'il ne touche pas.
+        def syncTest = project.hasProperty('syncTest')
+        if (syncTest) {
+            applicationIdSuffix ".synctest"
+        }
         manifestPlaceholders = [
             netSecConfig    : lanCleartext ? "network_security_config_lan"
                                            : "network_security_config",
             cleartextAllowed: lanCleartext ? "true" : "false",
+            appLabel        : syncTest ? "ERPLibre (test)" : "@string/app_name",
+            mainLabel       : syncTest ? "ERPLibre (test)" : "@string/title_activity_main",
         ]
         if (!skipWhisper) {
             externalNativeBuild {

@@ -136,6 +136,31 @@ describe("NoteService with SQLite", () => {
     });
   });
 
+  describe("crud.editSince", () => {
+    it("keeps what a pull wrote since the editor read the note, and the editor's own changes", async () => {
+      const text = (value: string) => ({ id: "e", type: "text", params: { text: value, readonly: false } } as any);
+      const since = makeNote({ entries: [text("Typed")] });
+      await noteService.crud.add(since);
+      // A pull renames the note while the editor holds the copy it read
+      await db.updateNote("note-1", { ...since, title: "Pulled title" });
+      const mine = makeNote({ entries: [text("Typed more")] });
+      const { mine: asMerged, saved } = await noteService.crud.editSince("note-1", mine, since);
+      expect(saved.title).toBe("Pulled title");
+      expect((saved.entries[0].params as any).text).toBe("Typed more");
+      const stored = (await noteService.getNotes())[0];
+      expect(stored.title).toBe("Pulled title");
+      expect((stored.entries[0].params as any).text).toBe("Typed more");
+      // Copies taken as it wrote: later edits of mine do not reach them
+      (mine.entries[0].params as any).text = "Typed even more";
+      expect((asMerged.entries[0].params as any).text).toBe("Typed more");
+      expect((saved.entries[0].params as any).text).toBe("Typed more");
+    });
+
+    it("throws NoNoteMatchError for a note not stored", async () => {
+      await expect(noteService.crud.editSince("nonexistent", makeNote(), makeNote())).rejects.toBeInstanceOf(NoNoteMatchError);
+    });
+  });
+
   describe("crud.edit", () => {
     it("should edit an existing note", async () => {
       await noteService.crud.add(makeNote());
@@ -153,6 +178,41 @@ describe("NoteService with SQLite", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(NoNoteMatchError);
       }
+    });
+
+    it("marks a linked note pending for each server it is linked on", async () => {
+      await db.addSyncColumnsToNotes();
+      await db.addSyncPerServerStatusColumn();
+      await db.createNoteLinksTable();
+      await noteService.crud.add(makeNote());
+      for (const url of ["https://a.example.com", "https://b.example.com"]) {
+        await db.addApplication({
+          url, username: "u", password: "p", database: "db",
+          odooVersion: "", autoSync: false, pollIntervalMinutes: 5, ntfyUrl: "", ntfyTopic: "", ntfyToken: "",
+        } as any);
+      }
+      for (const configId of ["https://a.example.com|u|db", "https://b.example.com|u|db"]) {
+        await db.addNoteLink({
+          id: `l-${configId}`, noteId: "note-1", configId, model: "project.task", resId: 1,
+          kind: "create", remoteState: "ok", createdAt: "2026-01-01T00:00:00.000Z", lastSyncedAt: null,
+        });
+      }
+
+      await noteService.crud.edit("note-1", makeNote({ title: "Updated" }));
+
+      expect(await db.getNotePerServerStatus("note-1")).toEqual({
+        "https://a.example.com|u|db": "pending",
+        "https://b.example.com|u|db": "pending",
+      });
+      expect((await db.getNoteSyncInfo("note-1")).syncStatus).toBe("pending");
+    });
+
+    it("leaves a never-synced note local", async () => {
+      await db.addSyncColumnsToNotes();
+      await db.createNoteLinksTable();
+      await noteService.crud.add(makeNote());
+      await noteService.crud.edit("note-1", makeNote({ title: "Updated" }));
+      expect((await db.getNoteSyncInfo("note-1")).syncStatus).toBe("local");
     });
   });
 

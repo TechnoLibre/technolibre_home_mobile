@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
+  `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
+  against real Odoo servers; a development build also exposes
+  `window.__erplibreTest` to its device tests, and `-PsyncTest` builds the
+  app as `ca.erplibre.home.synctest`, beside the user's own.
 - **Test bundle** — a third target in Options › Code, after Mobile and
   ERPLibre. 52 display fixtures under 400 KB: PNG in colour, alpha and
   greyscale plus the 1×1 degenerate case, BMP, static and animated GIF,

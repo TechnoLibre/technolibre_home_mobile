@@ -8,6 +8,7 @@ import { ApplicationsEditComponent } from "../components/applications/edit/appli
 import { IntentComponent } from "../components/intent/intent_component";
 import { NoteListComponent } from "../components/note_list/note_list_component";
 import { NoteComponent } from "../components/note/note_component";
+import { ActivityCalendarComponent } from "../components/activities/activity_calendar_component";
 import { ServersAddComponent } from "../components/servers/add/servers_add_component";
 import { ServersEditComponent } from "../components/servers/edit/servers_edit_component";
 import { ServersDeployComponent } from "../components/servers/deploy/servers_deploy_component";
@@ -44,6 +45,7 @@ export const routes: Route[] = [
 	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
 	{ pathname: "/servers/resources/:host/:username", component: ServersResourcesComponent },
 	{ pathname: "/tags/:id", component: TagNotesComponent },
+	{ pathname: "/activities", component: ActivityCalendarComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },

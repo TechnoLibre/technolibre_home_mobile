@@ -1473,16 +1473,72 @@ export const FEATURE_TREE: FeatureNode[] = [
                 permissions: ["internet"],
                 tests: ["src/__tests__/syncService.test.ts"],
                 howItWorks: {
-                    en: "Each note tracks (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) plus a multi-server "
-                        + "selection. Pull diffs are merged client-side using "
-                        + "last-modified-wins per field; conflicts surface in "
-                        + "the UI for explicit resolution.",
-                    fr: "Chaque note stocke (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) + sélection "
-                        + "multi-serveurs. Les diffs pull sont mergés client "
-                        + "en last-modified-wins par champ ; les conflits "
-                        + "remontent en UI pour résolution explicite.",
+                    en: "A note is bound to one project.task per sync target "
+                        + "(url|username|database) through note_links: push writes that "
+                        + "server's own task or creates and links one (one push "
+                        + "at a time per note and server). sync_per_server_status "
+                        + "holds synced / error / pending per server; the note's "
+                        + "sync_status is derived from the live applications' "
+                        + "entries (error, then pending, then synced). "
+                        + "syncAll(config) pushes the notes pending or in error "
+                        + "for that server, so a note queued offline, or whose "
+                        + "push failed, leaves on the next sync; a failed "
+                        + "creation first waits out its retry delay (30 s "
+                        + "doubling to one hour), which a reconnect ignores. "
+                        + "Pull pages "
+                        + "through the tasks written since a per-server cursor, "
+                        + "archived ones included, and copies title, pinned, "
+                        + "archived and (Odoo 17+) done onto linked notes, except "
+                        + "notes still pending or in error for that server; a note "
+                        + "it changes is queued for its other servers, synced "
+                        + "again in the same run (a tap, a resume) when already "
+                        + "done; a note changed during its push (an edit, a pull) "
+                        + "is pushed again at once. A task deleted "
+                        + "on the server marks its link deleted and is recreated "
+                        + "only when the user confirms. Creating a note's task "
+                        + "runs as its task.create outbox operation: the task "
+                        + "carries the operation's erplibre-mobile:<uuid> marker, "
+                        + "and a retry searches it first so a create whose answer "
+                        + "was lost is adopted instead of duplicated; several "
+                        + "matches (a copy made on the server keeps the marker) "
+                        + "block it until the user picks the task to link. A "
+                        + "retry waits three minutes after the last create sent, "
+                        + "so a create the server is still running has committed "
+                        + "before the search looks for it.",
+                    fr: "Une note est liée à une project.task par cible de sync "
+                        + "(url|username|base) via note_links : le push écrit la tâche de CE "
+                        + "serveur ou en crée une et la lie (un seul push à la "
+                        + "fois par note et serveur). sync_per_server_status porte "
+                        + "synced / error / pending par serveur ; le sync_status "
+                        + "de la note en est déduit sur les applications encore "
+                        + "présentes (error, puis pending, puis synced). "
+                        + "syncAll(config) pousse les notes en attente ou en "
+                        + "erreur pour ce serveur : une note mise en attente hors "
+                        + "ligne, ou dont le push a échoué, part à la sync "
+                        + "suivante ; une création en échec attend d'abord son "
+                        + "délai (30 s doublées jusqu'à une heure), qu'un retour "
+                        + "du réseau ignore. Le pull parcourt par pages les tâches écrites "
+                        + "depuis un curseur par serveur, archivées comprises, et "
+                        + "recopie titre, épinglage, archivage et (Odoo 17+) fait "
+                        + "sur les notes liées, sauf celles encore en attente ou "
+                        + "en erreur pour ce serveur ; une note qu'il modifie est "
+                        + "mise en attente pour ses autres serveurs, resynchronisés "
+                        + "dans le même passage (un tap, une reprise) s'ils étaient "
+                        + "déjà faits ; une note changée pendant son push (une "
+                        + "édition, un pull) est renvoyée aussitôt. Une tâche "
+                        + "supprimée sur le serveur marque son lien supprimé et "
+                        + "n'est recréée que si l'utilisateur confirme. La "
+                        + "création de la tâche d'une note passe par son opération "
+                        + "task.create de la file : la tâche porte le marqueur "
+                        + "erplibre-mobile:<uuid> de l'opération, et une reprise le "
+                        + "cherche d'abord, si bien qu'un create dont la réponse "
+                        + "s'est perdue est repris au lieu d'être dupliqué ; "
+                        + "plusieurs résultats (une copie faite sur le serveur "
+                        + "garde le marqueur) le bloquent jusqu'à ce que "
+                        + "l'utilisateur choisisse la tâche à lier. Une reprise "
+                        + "attend trois minutes après le dernier create envoyé, "
+                        + "pour qu'un create encore en cours sur le serveur soit "
+                        + "validé avant que la recherche ne le cherche.",
                 },
                 dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
@@ -1490,6 +1546,574 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/syncService.ts",
                     "src/models/syncConfig.ts",
                 ],
+            },
+            {
+                id: "sync.odoo-rpc",
+                label: { en: "Odoo RPC client and probes", fr: "Client RPC Odoo et sondes" },
+                description: {
+                    en: "JSON-RPC session, typed calls, cached per-server model probes.",
+                    fr: "Session JSON-RPC, appels typés, sondes de modèles en cache par serveur.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/odooRpcClient.test.ts", "src/__tests__/capabilityService.test.ts"],
+                howItWorks: {
+                    en: "OdooRpcClient talks to Odoo 16 to 18 through the standard routes "
+                        + "only (session/authenticate, dataset/call_kw), keeps one session per "
+                        + "url, user and database and re-authenticates once on code 100 or HTTP "
+                        + "401. Helpers: searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access on 18, check_access_rights otherwise; null "
+                        + "when neither answers) and messagePost. CapabilityService probes a "
+                        + "model with fields_get (an unknown model answers KeyError), the three rights "
+                        + "and activity_ids / message_ids, never ir.model, and caches the "
+                        + "answer in server_capabilities for offline checks; ensure() probes "
+                        + "again after a day when online.",
+                    fr: "OdooRpcClient parle à Odoo 16 à 18 par les seules routes standard "
+                        + "(session/authenticate, dataset/call_kw), garde une session par url, "
+                        + "utilisateur et base, et se reconnecte une fois sur le code 100 ou un "
+                        + "HTTP 401. Aides : searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access en 18, check_access_rights sinon ; null si "
+                        + "aucun ne répond) et messagePost. CapabilityService sonde un modèle "
+                        + "par fields_get (un modèle inconnu répond KeyError), les trois droits et "
+                        + "activity_ids / message_ids, jamais ir.model, et garde la réponse "
+                        + "dans server_capabilities pour valider hors ligne ; ensure() sonde "
+                        + "de nouveau après un jour quand le réseau est là.",
+                },
+                dependsOn: ["deployment.applications"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/odoo/odooRpcClient.ts",
+                    "src/services/odoo/capabilityService.ts",
+                ],
+            },
+            {
+                id: "sync.task-project",
+                label: { en: "Task project", fr: "Projet de la tâche" },
+                description: {
+                    en: "Project of a note's new task, chosen per server, kept offline.",
+                    fr: "Projet de la nouvelle tâche d'une note, choisi par serveur, gardé hors ligne.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/projectService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                ],
+                howItWorks: {
+                    en: "A tap on sync with a server where the note has neither task nor "
+                        + "opportunity, or where a creation waits for a choice, opens the "
+                        + "picker: per server, the project of the new task, or none (a "
+                        + "personal task), the server's last choice first. ProjectService "
+                        + "lists the active projects online and caches them in "
+                        + "remote_records_cache; when the projects cannot be read (offline, "
+                        + "server failing) the picker offers the cache, plus \"choose later\", "
+                        + "which leaves the creation incomplete until a project is chosen. A "
+                        + "cached probe denying task creation greys the Task box; the server "
+                        + "is greyed only when nothing can be sent there. The "
+                        + "project is set only by create: a task moved on the server stays in "
+                        + "its project, and pull and poll read the linked tasks whatever their "
+                        + "project. A project gone, archived or hidden, or a create the server "
+                        + "refuses, blocks the creation until the next tap chooses again; a "
+                        + "task deleted on the server is recreated in the project the picker "
+                        + "then asks for.",
+                    fr: "Un appui sur sync vers un serveur où la note n'a ni tâche ni "
+                        + "opportunité, ou où une création attend un choix, ouvre le "
+                        + "sélecteur : par serveur, le projet de la nouvelle tâche, ou aucun "
+                        + "(tâche personnelle), le dernier choix du serveur d'abord. "
+                        + "ProjectService liste les projets actifs en ligne et les garde dans "
+                        + "remote_records_cache ; quand les projets sont illisibles (hors "
+                        + "ligne, serveur en échec), le sélecteur propose le cache, plus "
+                        + "« choisir plus tard », qui laisse la création incomplète jusqu'au "
+                        + "choix d'un projet. Une sonde en cache qui refuse la création de "
+                        + "tâches grise la case Tâche ; le serveur n'est grisé que si rien ne "
+                        + "peut y partir. Seul le create pose le projet : une "
+                        + "tâche déplacée sur le serveur reste dans son projet, et pull et poll "
+                        + "lisent les tâches liées quel que soit leur projet. Un projet "
+                        + "disparu, archivé ou caché, ou un create refusé, bloque la création "
+                        + "jusqu'au prochain appui, qui fait choisir de nouveau ; une tâche "
+                        + "supprimée sur le serveur est recréée dans le projet que le "
+                        + "sélecteur demande alors.",
+                },
+                dependsOn: ["sync.service", "sync.outbox", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/odoo/projectService.ts",
+                    "src/services/targetPicker.ts",
+                    "src/components/note/note_component.ts",
+                ],
+            },
+            {
+                id: "sync.lead",
+                label: { en: "Opportunity target", fr: "Cible opportunité" },
+                description: {
+                    en: "Send a note as a CRM opportunity, beside or instead of a task.",
+                    fr: "Envoyer une note comme opportunité CRM, à côté ou à la place d'une tâche.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/recordSearchService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker shows, per server, a Task and an Opportunity box, "
+                        + "checkable together; the server's last checked kinds are the "
+                        + "default for a note with nothing there. An opportunity is a "
+                        + "crm.lead created with type opportunity, the note's title, "
+                        + "description (with the marker), crm.tag tags, archive state and "
+                        + "first date (day only), plus the client and expected revenue "
+                        + "chosen, which only create sends; done and pinned do not map. "
+                        + "Clients come from name_search, kept in remote_records_cache "
+                        + "(200 per server) for offline search. A client gone or hidden "
+                        + "blocks the creation until chosen again; the CRM missing or no "
+                        + "create right greys the box. Unchecking a kind that waited (blocked, "
+                        + "left for later, deleted on the server) drops it: its creation is "
+                        + "cancelled and its deleted link dismissed. Each kind is pushed on "
+                        + "its own: one waiting for a choice never holds back the other's "
+                        + "writes.",
+                    fr: "Le sélecteur montre, par serveur, une case Tâche et une case "
+                        + "Opportunité, cochables ensemble ; les derniers types cochés du "
+                        + "serveur sont le défaut d'une note qui n'y a rien. Une opportunité "
+                        + "est un crm.lead créé avec le type opportunity, le titre, la "
+                        + "description (avec le marqueur), les étiquettes crm.tag, "
+                        + "l'archivage et la première date (le jour) de la note, plus le "
+                        + "client et le revenu attendu choisis, que seul le create envoie ; "
+                        + "fait et épinglée ne se traduisent pas. Les clients viennent de "
+                        + "name_search, gardés dans remote_records_cache (200 par serveur) "
+                        + "pour chercher hors ligne. Un client disparu ou caché bloque la "
+                        + "création jusqu'à un nouveau choix ; un CRM absent ou sans droit de "
+                        + "création grise la case. Décocher un type qui attendait (bloqué, "
+                        + "laissé pour plus tard, supprimé sur le serveur) l'abandonne : sa "
+                        + "création est annulée et son lien supprimé écarté. Chaque type part "
+                        + "seul : celui qui attend un choix ne retient pas les écritures de "
+                        + "l'autre.",
+                },
+                dependsOn: ["sync.task-project", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/recordSearchService.ts"],
+            },
+            {
+                id: "sync.activity",
+                label: { en: "Activity target", fr: "Cible activité" },
+                description: {
+                    en: "Schedule activities from a note on any record of a server.",
+                    fr: "Planifier des activités depuis une note sur n'importe quel record d'un serveur.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/activityPicker.test.ts",
+                    "src/__tests__/activityTypeService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker lists, per server, the note's activities and adds new "
+                        + "ones: a model from a fixed list probed for activity_ids (or a "
+                        + "technical name), a record found by name_search (the note's own task "
+                        + "or opportunity first), a type from mail.activity.type, a due date "
+                        + "(the note's date, else today plus the type's delay) and a user "
+                        + "(the connected one by default). A note can have several per server, "
+                        + "each its own activity.create row in the outbox and its own "
+                        + "note_links row (kind activity, choices in params_json). The create "
+                        + "passes default_res_model in the context, so no ir.model read is "
+                        + "needed; the record, type and user are checked first. Later pushes "
+                        + "write summary and note; a done note calls action_feedback and the "
+                        + "link turns done. An activity gone on the server is kept as history.",
+                    fr: "Le sélecteur liste, par serveur, les activités de la note et en "
+                        + "ajoute : un modèle d'une liste fixe sondée sur activity_ids (ou un "
+                        + "nom technique), un record trouvé par name_search (la tâche ou "
+                        + "l'opportunité de la note d'abord), un type de mail.activity.type, "
+                        + "une échéance (la date de la note, sinon aujourd'hui plus le délai "
+                        + "du type) et un utilisateur (celui connecté par défaut). Une note peut "
+                        + "en avoir plusieurs par serveur, chacune avec sa ligne "
+                        + "activity.create dans la file et sa ligne note_links (type activity, "
+                        + "choix dans params_json). Le create passe default_res_model dans le "
+                        + "contexte : aucune lecture d'ir.model. Le record, le type et "
+                        + "l'utilisateur sont vérifiés avant. Les envois suivants écrivent "
+                        + "summary et note ; une note faite appelle action_feedback et le lien "
+                        + "passe à fait. Une activité disparue du serveur reste en historique.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/activityTypeService.ts"],
+            },
+            {
+                id: "sync.message",
+                label: { en: "Message in a thread", fr: "Message dans un fil" },
+                description: {
+                    en: "Post a note as a logged note in any record's chatter, kept up to date.",
+                    fr: "Poster une note comme note interne dans le fil de n'importe quel record, tenue à jour.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts", "src/__tests__/activityPicker.test.ts"],
+                howItWorks: {
+                    en: "Beside activities, the picker's section posts the note in the chatter "
+                        + "of a record (same models, probed for message_ids, or a technical "
+                        + "name). Each message is its own message.post row in the outbox and "
+                        + "note_links row (kind message): message_post as a logged note "
+                        + "(mt_note), the title in bold, the text, the marker. A later change "
+                        + "of the text edits the message through /mail/message/update_content, "
+                        + "the web client's own edit route (Odoo 16 to 18); the hash of the "
+                        + "body last sent spares an edit when nothing changed. A message gone "
+                        + "on the server is kept as history.",
+                    fr: "À côté des activités, la section du sélecteur poste la note dans le "
+                        + "fil d'un record (mêmes modèles, sondés sur message_ids, ou un nom "
+                        + "technique). Chaque message a sa ligne message.post dans la file et "
+                        + "sa ligne note_links (type message) : message_post en note interne "
+                        + "(mt_note), le titre en gras, le texte, le marqueur. Un changement "
+                        + "du texte édite ensuite le message par /mail/message/update_content, "
+                        + "la route d'édition du client web (Odoo 16 à 18) ; l'empreinte du "
+                        + "dernier corps envoyé évite une édition quand rien n'a changé. Un "
+                        + "message disparu du serveur reste en historique.",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/odooRpcClient.ts"],
+            },
+            {
+                id: "sync.invoice",
+                label: { en: "Draft invoice target", fr: "Cible brouillon de facture" },
+                description: {
+                    en: "Draft a customer invoice or vendor bill from a note, tied to its task or opportunity.",
+                    fr: "Rédiger une facture client ou fournisseur en brouillon depuis une note, liée à sa tâche ou à son opportunité.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/invoiceForm.test.ts",
+                ],
+                howItWorks: {
+                    en: "A third box of the picker, beside Task and Opportunity: one account.move "
+                        + "per note and server, created as a draft with its type (out_invoice or "
+                        + "in_invoice), partner, date, reference and lines (label, quantity, "
+                        + "price, optional product), the note going to narration with the marker. "
+                        + "The form is dynamic: fields_get (with depends) and default_get name the "
+                        + "required fields the server neither computes nor defaults, asked by "
+                        + "type and kept for offline. The tie to the note's task or opportunity "
+                        + "writes a settable many2one of account.move to it when a module adds "
+                        + "one, else posts a message in each chatter. Later pushes write narration "
+                        + "only.",
+                    fr: "Une troisième case du sélecteur, à côté de Tâche et Opportunité : un "
+                        + "account.move par note et serveur, créé en brouillon avec son type "
+                        + "(out_invoice ou in_invoice), son partenaire, sa date, sa référence et "
+                        + "ses lignes (libellé, quantité, prix, produit facultatif), la note allant "
+                        + "dans narration avec le marqueur. Le formulaire est dynamique : fields_get "
+                        + "(avec depends) et default_get donnent les champs obligatoires que le "
+                        + "serveur ne calcule ni ne remplit par défaut, demandés par type et gardés "
+                        + "hors ligne. Le lien vers la tâche ou l'opportunité de la note écrit un "
+                        + "many2one modifiable d'account.move vers elle quand un module en ajoute "
+                        + "un, sinon poste un message dans chaque fil. Les envois suivants "
+                        + "n'écrivent que narration.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/invoiceForm.ts", "src/services/targetPicker.ts"],
+            },
+            {
+                id: "sync.calendar",
+                label: { en: "Activity calendar", fr: "Calendrier des activités" },
+                description: {
+                    en: "A month of the activities of every server, mine and my team's, with done, reschedule and reminders.",
+                    fr: "Un mois des activités de tous les serveurs, les miennes et celles de l'équipe, avec fait, report et rappels.",
+                },
+                status: "experimental",
+                permissions: ["internet", "notifications"],
+                tests: [
+                    "src/__tests__/activityCalendarService.test.ts",
+                    "src/__tests__/calendarView.test.ts",
+                    "src/__tests__/calendarReminders.test.ts",
+                ],
+                howItWorks: {
+                    en: "Per server, the open mail.activity of the connected user (uid from "
+                        + "get_session_info) and of the users chosen, due up to 90 days ahead, "
+                        + "overdue ones included, plus on Odoo 17+ those done (archived) in the "
+                        + "last 30 days, kept in activities_cache for offline. Team: users "
+                        + "chosen by search, plus the members of the user's crm.team. Mark done "
+                        + "(action_feedback, after an active check on 17+) and reschedule "
+                        + "(date_deadline) apply to the cache at once and wait in the outbox "
+                        + "(calendar.done, calendar.reschedule) when offline. A day's \"New "
+                        + "note\" creates a dated note and opens the sync picker on an activity "
+                        + "due that day. Each refresh, and the app's start from the cache (an "
+                        + "update or a forced stop cancels alarms), reschedules local reminders "
+                        + "of the user's open activities (hour and days before, in the sync options).",
+                    fr: "Par serveur, les mail.activity ouvertes de l'utilisateur connecté (uid "
+                        + "de get_session_info) et des utilisateurs choisis, dues jusqu'à 90 jours, "
+                        + "celles en retard comprises, plus en Odoo 17+ celles faites (archivées) "
+                        + "depuis 30 jours, gardées dans activities_cache hors ligne. Équipe : des "
+                        + "utilisateurs cherchés, plus les membres des crm.team de l'utilisateur. "
+                        + "Marquer faite (action_feedback, après lecture d'active en 17+) et "
+                        + "reporter (date_deadline) s'appliquent au cache aussitôt et attendent "
+                        + "dans la file (calendar.done, calendar.reschedule) hors ligne. « Nouvelle "
+                        + "note » d'un jour crée une note datée et ouvre le sélecteur sur une "
+                        + "activité due ce jour. Chaque rafraîchissement, et le démarrage de "
+                        + "l'app depuis le cache (une mise à jour ou un arrêt forcé annule les "
+                        + "alarmes), replanifie les rappels locaux des activités ouvertes (heure "
+                        + "et jours avant, dans les options).",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: { kind: "route", url: "/activities" },
+                files: [
+                    "src/components/activities/activity_calendar_component.ts",
+                    "src/components/activities/activity_calendar_component.scss",
+                    "src/services/activityCalendarService.ts",
+                    "src/services/calendarView.ts",
+                    "src/services/calendarReminders.ts",
+                    "src/utils/openRecordInApp.ts",
+                ],
+            },
+            {
+                id: "sync.two-way",
+                label: { en: "Two-way sync and conflicts", fr: "Sync dans les deux sens et conflits" },
+                description: {
+                    en: "Server changes come back into the note, field by field; a field changed on both sides is a conflict the user settles.",
+                    fr: "Les changements du serveur reviennent dans la note, champ par champ ; un champ changé des deux côtés est un conflit que l'utilisateur règle.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/noteMirror.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "Each link keeps a base: the note's and the record's mirrored values "
+                        + "(title, text, tags, date, done, archived, pinned, as each kind has "
+                        + "them) at their last exchange. A pull of tasks, opportunities, invoices "
+                        + "and activities (one cursor per model), and every push before writing, "
+                        + "read the record and merge three ways: a field changed on the server "
+                        + "only goes into the note (the text replacing its text entries), except "
+                        + "the date, which the note screen proposes (update the note, or keep its "
+                        + "date until the server's changes again), one "
+                        + "changed in the app only is written alone, tags as added and removed "
+                        + "(commands 4 and 3) and a task's state only when done changed. A field "
+                        + "changed on both sides puts the server in conflict: nothing is written "
+                        + "until the note's conflict dialog keeps, per field, the app's or the "
+                        + "server's version. The open note's saves and pulled reloads merge "
+                        + "against the note as the screen last knew it: what a pull wrote stays "
+                        + "where the user changed nothing, and keystrokes not saved yet stay.",
+                    fr: "Chaque lien garde une base : les valeurs miroirs de la note et du "
+                        + "record (titre, texte, étiquettes, date, fait, archivée, épinglée, selon "
+                        + "le type) au dernier échange. Le pull des tâches, opportunités, factures "
+                        + "et activités (un curseur par modèle), et chaque envoi avant d'écrire, "
+                        + "lisent le record et fusionnent à trois voies : un champ changé sur le "
+                        + "serveur seulement entre dans la note (le texte remplaçant ses entrées "
+                        + "texte), sauf la date, que l'écran de la note propose (mettre la note à "
+                        + "jour, ou garder sa date jusqu'au prochain changement du serveur), un champ changé dans l'app seulement est écrit seul, les "
+                        + "étiquettes en ajouts et retraits (commandes 4 et 3) et l'état d'une "
+                        + "tâche seulement si fait change. Un champ changé des deux côtés met le "
+                        + "serveur en conflit : rien n'est écrit avant que l'écran de conflit de "
+                        + "la note garde, champ par champ, la version de l'app ou du serveur. Les "
+                        + "sauvegardes et rechargements de la note ouverte fusionnent avec la note "
+                        + "telle que l'écran l'a connue : ce qu'un pull a écrit reste là où "
+                        + "l'utilisateur n'a rien changé, et les frappes pas encore sauvées restent.",
+                },
+                dependsOn: ["sync.task-project", "sync.lead", "sync.invoice", "sync.activity"],
+                demo: NONE_BG,
+                files: ["src/services/noteMirror.ts", "src/services/note/noteEditMerge.ts", "src/components/note/note_component.ts"],
+            },
+            {
+                id: "sync.background-notice",
+                label: { en: "Pending sync notice", fr: "Avis de synchronisation en attente" },
+                description: {
+                    en: "App closed, a notification tells the notes still waiting for Odoo and opens the app.",
+                    fr: "App fermée, une notification signale les notes en attente pour Odoo et ouvre l'app.",
+                },
+                status: "experimental",
+                permissions: ["notifications"],
+                tests: ["src/__tests__/pendingSyncNotice.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "The sync runs only in the app, its logic and encrypted data being in the "
+                        + "web view. Going to the background, the app publishes to the native "
+                        + "NoteSyncPlugin how many notes wait (pending or in error, plus the "
+                        + "calendar's changes) and how many are in conflict, with the texts in its "
+                        + "language. NoteSyncJob, a persisted periodic job (15 minutes, network "
+                        + "required, apart from the SMS gateway's), shows them while the app is "
+                        + "closed; a tap opens the app, whose resume syncs what is due. Coming back "
+                        + "to the foreground clears the notice.",
+                    fr: "La synchronisation ne tourne que dans l'app, sa logique et ses données "
+                        + "chiffrées étant dans la vue web. En passant en arrière-plan, l'app publie "
+                        + "au NoteSyncPlugin natif le nombre de notes en attente (à envoyer ou en "
+                        + "erreur, plus les changements du calendrier) et en conflit, avec les "
+                        + "textes dans sa langue. NoteSyncJob, un travail périodique persistant "
+                        + "(15 minutes, réseau requis, distinct de celui de la passerelle SMS), les "
+                        + "affiche app fermée ; un appui ouvre l'app, dont la reprise synchronise ce "
+                        + "qui est dû. Le retour au premier plan retire l'avis.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/pendingSyncNotice.ts",
+                    "src/plugins/noteSyncPlugin.ts",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncPlugin.java",
+                ],
+            },
+            {
+                id: "sync.companies",
+                label: { en: "Several companies", fr: "Plusieurs sociétés" },
+                description: {
+                    en: "For a user of several companies, each send chooses the company of the new records.",
+                    fr: "Pour un utilisateur de plusieurs sociétés, chaque envoi choisit la société des nouveaux enregistrements.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "The picker reads the user's companies from get_session_info "
+                        + "(user_companies), kept per server for offline, and shows a choice only "
+                        + "when there are several, the last one chosen first. Every call to that "
+                        + "server is then made in all of them (allowed_company_ids), so records of "
+                        + "each are seen and written; a creation puts the chosen company first, "
+                        + "where the server creates the record.",
+                    fr: "Le sélecteur lit les sociétés de l'utilisateur dans get_session_info "
+                        + "(user_companies), gardées par serveur hors ligne, et ne propose un "
+                        + "choix que s'il y en a plusieurs, la dernière choisie d'abord. Chaque "
+                        + "appel à ce serveur se fait alors dans toutes (allowed_company_ids), pour "
+                        + "voir et écrire les records de chacune ; une création met la société "
+                        + "choisie en tête, celle où le serveur crée le record.",
+                },
+                dependsOn: ["sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/odooRpcClient.ts"],
+            },
+            {
+                id: "sync.attachments",
+                label: { en: "Note files as attachments", fr: "Fichiers de la note en pièces jointes" },
+                description: {
+                    en: "A note's photos, recordings and videos go to its records and messages, within a size and network limit.",
+                    fr: "Les photos, enregistrements et vidéos d'une note vont à ses records et messages, dans une limite de taille et de réseau.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/attachmentService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "After each create or write of a note's task, opportunity or invoice, and "
+                        + "of each message it posted, its media files not sent yet to that record "
+                        + "become ir.attachment of it (a message then lists them beside its own). "
+                        + "Options › Odoo sync set Wi-Fi only (a file held back goes on the next "
+                        + "push) and a largest size (a larger file is left out). Each file goes "
+                        + "once per record; a removed one stays on the server; a refusal is kept "
+                        + "and never fails the push. Activities take none. A file left out "
+                        + "(too big, missing, refused) is named on the note, with why, until sent; "
+                        + "so are those held for Wi-Fi while off it, and going onto Wi-Fi syncs.",
+                    fr: "Après chaque création ou écriture de la tâche, de l'opportunité ou de la "
+                        + "facture d'une note, et de chaque message qu'elle a posté, ses fichiers "
+                        + "pas encore envoyés à ce record en deviennent des ir.attachment (un "
+                        + "message les ajoute alors aux siens). Options › Synchronisation Odoo "
+                        + "règle le Wi-Fi seulement (un fichier retenu part à l'envoi suivant) et "
+                        + "la plus grosse taille (au-delà, le fichier est laissé de côté). Chaque "
+                        + "fichier part une fois par record ; un fichier retiré reste sur le "
+                        + "serveur ; un refus est noté sans faire échouer l'envoi. Les activités "
+                        + "n'en prennent pas. Un fichier laissé de côté (trop gros, introuvable, "
+                        + "refusé) est nommé sur la note, avec la raison, jusqu'à son envoi ; de "
+                        + "même ceux retenus pour le Wi-Fi hors Wi-Fi, et passer au Wi-Fi synchronise.",
+                },
+                dependsOn: ["sync.task-project", "sync.message"],
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/attachmentService.ts"],
+            },
+            {
+                id: "sync.http-policy",
+                label: { en: "Unencrypted http", fr: "http non chiffré" },
+                description: {
+                    en: "http:// servers refused unless allowed in the options.",
+                    fr: "Serveurs http:// refusés sauf autorisation dans les options.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/httpPolicy.test.ts"],
+                howItWorks: {
+                    en: "Every request to Odoo goes through OdooRpcClient.rawPost, which "
+                        + "refuses an http:// url with InsecureHttpError, before anything is "
+                        + "sent, while \"Allow http (unencrypted)\" is off in Options › Odoo "
+                        + "sync. Opening an application, or a note's record, in the web view "
+                        + "is refused the same way, since its login script types the "
+                        + "password. The option is stored in localStorage; unreadable storage "
+                        + "counts as off.",
+                    fr: "Toute requête vers Odoo passe par OdooRpcClient.rawPost, qui refuse "
+                        + "une url http:// par InsecureHttpError, avant tout envoi, tant que "
+                        + "« Autoriser http (non chiffré) » est désactivé dans Options › "
+                        + "Synchronisation Odoo. Ouvrir une application, ou l'enregistrement "
+                        + "d'une note, dans la vue web est refusé de même, son script de "
+                        + "connexion tapant le mot de passe. L'option est gardée dans "
+                        + "localStorage ; un stockage illisible vaut désactivé.",
+                },
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/odoo/httpPolicy.ts"],
+            },
+            {
+                id: "sync.outbox",
+                label: { en: "Sync outbox", fr: "File d'opérations de sync" },
+                description: {
+                    en: "Operations waiting to reach a server, kept offline and retried.",
+                    fr: "Opérations en attente d'un serveur, gardées hors ligne et retentées.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/outboxService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "sync_outbox holds one row per operation of a note on one server, "
+                        + "with a client_uuid kept across retries. attempt() stores the "
+                        + "attempt count and the running status before the handler talks to "
+                        + "the server, deletes the row on success, schedules a retry after "
+                        + "30 s doubled per failure (one hour at most), or parks the row as "
+                        + "blocked when the handler raises OutboxBlockedError; "
+                        + "OutboxRetryLaterError postpones the row without counting an attempt, "
+                        + "even past a forced sync. drain(config) "
+                        + "runs the due rows oldest first, after the row each depends on; "
+                        + "blocked and incomplete rows wait for the user. Rows left running "
+                        + "by a killed app turn failed at startup.",
+                    fr: "sync_outbox porte une ligne par opération d'une note sur un "
+                        + "serveur, avec un client_uuid gardé d'un essai à l'autre. attempt() "
+                        + "enregistre le nombre d'essais et l'état running avant que le "
+                        + "handler ne parle au serveur, supprime la ligne en cas de succès, "
+                        + "planifie un nouvel essai après 30 s doublées à chaque échec (une "
+                        + "heure au plus), ou gare la ligne en blocked quand le handler lève "
+                        + "OutboxBlockedError ; OutboxRetryLaterError reporte la ligne sans "
+                        + "compter d'essai, même lors d'une sync forcée. drain(config) "
+                        + "exécute les lignes dues, des plus "
+                        + "anciennes aux plus récentes, après celle dont chacune dépend ; les "
+                        + "lignes blocked et incomplete attendent l'utilisateur. Les lignes "
+                        + "laissées running par une app tuée passent en failed au démarrage.",
+                },
+                dependsOn: ["sync.service"],
+                demo: NONE_BG,
+                files: ["src/services/outboxService.ts"],
+            },
+            {
+                id: "sync.network",
+                label: { en: "Network detection", fr: "Détection du réseau" },
+                description: {
+                    en: "Online state and link type; flushes the queue when it comes back.",
+                    fr: "État en ligne et type de lien ; vide la file au retour du réseau.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/networkService.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "NetworkService reads @capacitor/network (Android "
+                        + "ConnectivityManager), falling back to navigator.onLine and the "
+                        + "window online event on an APK built without the plugin. "
+                        + "NotificationService syncs every server on an offline → online "
+                        + "transition, retry delays ignored, and the servers with due work at "
+                        + "startup, on each return to the foreground and when a timer reaches "
+                        + "the earliest retry time. The plugin's own connected flag needs a "
+                        + "validated internet link, so any Wi-Fi or cellular link counts as "
+                        + "connected (Ethernet and tethering report \"unknown\"): a server on "
+                        + "a LAN without internet stays reachable.",
+                    fr: "NetworkService lit @capacitor/network (ConnectivityManager "
+                        + "d'Android), avec repli sur navigator.onLine et l'événement online "
+                        + "de la fenêtre pour un APK construit sans le plugin. "
+                        + "NotificationService synchronise chaque serveur au passage hors "
+                        + "ligne → en ligne, sans attendre les délais, et les serveurs qui ont "
+                        + "du travail dû au démarrage, à chaque retour au premier plan et "
+                        + "quand une minuterie atteint la prochaine heure de reprise. Le "
+                        + "« connected » du plugin exige un lien internet validé : tout lien "
+                        + "Wi-Fi ou cellulaire compte donc comme connecté (Ethernet et partage "
+                        + "de connexion donnent « unknown »), et un serveur sur un réseau "
+                        + "local sans internet reste joignable.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/networkService.ts"],
             },
             {
                 id: "sync.options",
@@ -1527,12 +2151,26 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Versioned schema steps that grew the sync feature: addSyncColumns "
                         + "(initial odoo_id + sync_status), addSyncConfigId (per-server "
                         + "binding), addSyncPerServerStatus (separate sync_status row per "
-                        + "target), addSelectedSyncConfigIds (multi-select). Each migration is "
+                        + "target), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(one remote record per note and url|username|database target, "
+                        + "backfilled from odoo_id; older ids gain the database; legacy global "
+                        + "pending turned per-server; pull cursors), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
                         + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
                         + "(binding par serveur), addSyncPerServerStatus (ligne sync_status par "
-                        + "cible), addSelectedSyncConfigIds (multi-select). Chaque migration est "
+                        + "cible), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(un record distant par note et cible url|username|base, repris "
+                        + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
+                        + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
                 dependsOn: ["data.migrations"],
@@ -1542,8 +2180,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncConfigId.ts",
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
+                    "src/services/migrations/addNoteLinksTable.ts",
+                    "src/services/migrations/addSyncOutboxTable.ts",
+                    "src/services/migrations/addSyncTargetTables.ts",
+                    "src/services/migrations/addNoteLinkParams.ts",
+                    "src/services/migrations/addActivitiesCacheTable.ts",
                 ],
-                tests: ["src/__tests__/migrations.test.ts"],
+                tests: [
+                    "src/__tests__/migrations.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/outboxService.test.ts",
+                ],
             },
             {
                 id: "sync.notifications",
@@ -2686,6 +3333,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_BG,
                 files: [
                     "src/services/migrationService.ts",
+                    "src/services/migrations/index.ts",
                     "src/services/dataMigration.ts",
                 ],
                 tests: [

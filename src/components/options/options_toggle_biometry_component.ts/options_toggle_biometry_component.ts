@@ -69,6 +69,8 @@ export class OptionsToggleBiometryComponent extends EnhancedComponent {
 		newIsBiometryEnabledValue: boolean
 	) {
 		const confirmResult: ConfirmResult = await Dialog.confirm({
+			okButtonTitle: this.t("button.confirm"),
+			cancelButtonTitle: this.t("button.cancel"),
 			message: confirmMessage,
 			title: confirmTitle
 		});

@@ -11,6 +11,7 @@ import {EnhancedComponent} from "../../js/enhancedComponent";
 import {ErrorMessages} from "../../constants/errorMessages";
 import {Events} from "../../constants/events";
 import {WebViewUtils} from "../../utils/webViewUtils";
+import {assertUrlAllowed} from "../../services/odoo/httpPolicy";
 import {NetworkScanPlugin} from "../../plugins/networkScanPlugin";
 import type {ScannedHost} from "../../plugins/networkScanPlugin";
 
@@ -332,6 +333,14 @@ export class ApplicationsComponent extends EnhancedComponent {
 
         if (!matchingApp) {
             Dialog.alert({message: ErrorMessages.NO_APP_MATCH});
+            return;
+        }
+
+        // The login script types the password into the page: same rule as sync requests
+        try {
+            assertUrlAllowed(/^https?:\/\//i.test(matchingApp.url) ? matchingApp.url : "https://" + matchingApp.url);
+        } catch (error: unknown) {
+            Dialog.alert({message: error instanceof Error ? error.message : String(error)});
             return;
         }
 

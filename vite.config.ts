@@ -209,7 +209,7 @@ interface CopyStats {
  * maxFileSize: if set, files larger than this (bytes) are skipped.
  * stats: accumulated counters (pass a fresh object at the top-level call).
  */
-function copyDirToBundle(
+export function copyDirToBundle(
     srcDir: string,
     relBase: string,
     destDir: string,
@@ -293,7 +293,7 @@ function copyDirToBundle(
 
 // ── XML manifest parser ───────────────────────────────────────────────────────
 
-function parseManifestXml(xml: string): {
+export function parseManifestXml(xml: string): {
     remotes: Record<string, string>;
     projects: Array<{ name: string; path: string; remote: string; revision: string }>;
 } {
@@ -317,6 +317,29 @@ function parseManifestXml(xml: string): {
     }
 
     return { remotes, projects };
+}
+
+/**
+ * Absolute paths of the manifest projects present on disk, which the
+ * manifest-repo loop (section 2) bundles one tar.gz each. The workspace walk
+ * (section 1b) leaves them out, so no file ships twice: a project outside
+ * addons/ and mobile/, such as script/stream_deck/games, would otherwise land
+ * in both. Empty when section 2 bundles nothing (no manifest, or skipRepos):
+ * those files then stay in the workspace bundle.
+ */
+export function manifestProjectPathsOnDisk(
+    manifestPath: string,
+    skipRepos: boolean,
+): Set<string> {
+    if (skipRepos || !existsSync(manifestPath)) return new Set();
+    const { projects } = parseManifestXml(readFileSync(manifestPath, "utf-8"));
+    // Same root as section 2: {workspace}/.repo/local_manifests/<file>.
+    const workspaceRoot = resolve(dirname(manifestPath), "../..");
+    return new Set(
+        projects
+            .map((proj) => resolve(workspaceRoot, proj.path))
+            .filter((path) => existsSync(path)),
+    );
 }
 
 // ── Bundle-source plugin ──────────────────────────────────────────────────────
@@ -407,6 +430,15 @@ function bundleSourcePlugin(): Plugin {
                 `)`
             );
 
+            // The ERPLibre manifest that section 2 bundles, and its escape
+            // hatch. Read here because section 1b leaves out what section 2
+            // takes.
+            const manifestPath = resolve(
+                process.env["ERPLIBRE_MANIFEST_PATH"] ??
+                    join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
+            );
+            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+
             // ── 1b. Workspace root bundle (src/public/erplibre/) ──────────
             // The full ERPLibre workspace as seen from /home/.../erplibre01/,
             // minus the obvious heavy / redundant subtrees:
@@ -415,6 +447,8 @@ function bundleSourcePlugin(): Plugin {
             //   .venv*/      Python venvs
             //   odoo*/       upstream Odoo source trees
             //   node_modules / dist / build / .repo / .git / private
+            //   manifest projects on disk, already in src/public/repos/
+            //     (script/stream_deck/games, the Stream Deck games)
             //
             // Result: scripts, Makefile, conf/, manifest/, requirement/,
             // doc/, top-level docs, etc. — the things you'd actually want
@@ -448,9 +482,10 @@ function bundleSourcePlugin(): Plugin {
                     return false;
                 };
 
+                const inRepos = manifestProjectPathsOnDisk(manifestPath, skipRepos);
                 copyDirToBundle(
                     workspaceRoot, "", erplibreOutDir, erplibreIndex, skipWsFn,
-                    undefined, MAX_BUNDLE_FILE_BYTES, erplibreStats,
+                    inRepos, MAX_BUNDLE_FILE_BYTES, erplibreStats,
                 );
 
                 writeFileSync(
@@ -461,6 +496,9 @@ function bundleSourcePlugin(): Plugin {
                 console.log(
                     `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
                     `  (${Date.now() - erplibreT0} ms` +
+                    (erplibreStats.skippedExclude
+                        ? `, ${erplibreStats.skippedExclude} manifest projects left to repos/`
+                        : "") +
                     (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
                     `)`
                 );
@@ -503,10 +541,6 @@ function bundleSourcePlugin(): Plugin {
             }
 
             // ── 2. ERPLibre manifest repos (src/public/repos/) ────────────
-            const manifestPath = resolve(
-                process.env["ERPLIBRE_MANIFEST_PATH"] ??
-                    join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
-            );
             const reposOutDir = join(root, "src", "public", "repos");
             removeDirRobust(reposOutDir);
             mkdirSync(reposOutDir, { recursive: true });
@@ -525,8 +559,8 @@ function bundleSourcePlugin(): Plugin {
             // ~15 s of build + ~15 s of adb install (≈378 MB of assets gone).
             // The Code tool's "browse a manifest repo" flow surfaces a clear
             // error in this mode (BundleNotShippedError); use the full build
-            // when you actually need to browse those repos.
-            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+            // when you actually need to browse those repos. skipRepos is read
+            // above, with manifestPath.
 
             if (skipRepos) {
                 console.log(

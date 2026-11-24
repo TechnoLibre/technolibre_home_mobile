@@ -9,4 +9,5 @@ import { vi } from "vitest";
 export const Dialog = {
   alert: vi.fn().mockResolvedValue(undefined),
   confirm: vi.fn().mockResolvedValue({ value: true }),
+  prompt: vi.fn().mockResolvedValue({ value: "", cancelled: true }),
 };

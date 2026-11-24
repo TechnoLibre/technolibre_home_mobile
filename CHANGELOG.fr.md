@@ -8,6 +8,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
+- **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
+  (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
+  d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
+  développement expose aussi `window.__erplibreTest` à ses tests appareil, et
+  `-PsyncTest` construit l'app sous `ca.erplibre.home.synctest`, à côté de
+  celle de l'utilisateur.
 - **Bundle de test** — une troisième cible dans Options › Code, après Mobile
   et ERPLibre. 52 fixtures d'affichage sous 400 Ko : PNG en couleur, avec
   alpha et en niveaux de gris, plus le cas dégénéré 1×1, BMP, GIF fixe et
