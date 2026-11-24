@@ -2,8 +2,35 @@
  * Mock of @capacitor-community/sqlite.
  *
  * Simulates a SQLite database in memory using Maps.
- * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE.
+ * Handles basic CREATE TABLE, INSERT, SELECT, UPDATE, DELETE. A SELECT
+ * takes `col = ?`, `col != ?`, `col > ?`, `col < ?`,
+ * `col LIKE ? ESCAPE '\'`, `col IS NULL` and `(a = 1 OR b = 1 …)` (integer
+ * literals) conditions joined by AND, then
+ * an optional `ORDER BY col [ASC|DESC][, col [ASC|DESC]]…` (`rowid` is the row's
+ * place in the table) and `LIMIT n` or `LIMIT ?`. Anything else (a
+ * virtual table, a trigger, sqlite_master) is accepted and does nothing.
  */
+
+/**
+ * SQLite's LIKE with an escape character: `%` any run of characters, `_`
+ * one character, the escape makes the next character literal; case is
+ * folded for ASCII letters only, as SQLite does without ICU. NULL never
+ * matches.
+ */
+function sqliteLike(value: any, pattern: string, escape: string): boolean {
+  if (value === null || value === undefined) return false;
+  const lower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  let re = "";
+  const chars = Array.from(lower(String(pattern)));
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (c === escape && i + 1 < chars.length) re += chars[++i].replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    else if (c === "%") re += "[\\s\\S]*";
+    else if (c === "_") re += "[\\s\\S]";
+    else re += c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  }
+  return new RegExp("^" + re + "$", "u").test(lower(String(value)));
+}
 
 type Row = Record<string, any>;
 
@@ -34,16 +61,19 @@ class MockDBConnection {
       }
     }
 
-    const alterMatch = sql.match(/ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)/i);
+    const alterMatch = sql.match(/ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)(?:.*\bDEFAULT\s+('[^']*'|-?\d+))?/i);
     if (alterMatch) {
       const table = alterMatch[1];
       const col = alterMatch[2];
+      // Existing rows take the column's DEFAULT ('' or a number), else null
+      const literal = alterMatch[3];
+      const fill = literal === undefined ? null : literal.startsWith("'") ? literal.slice(1, -1) : Number(literal);
       const cols = this.columns.get(table) ?? [];
       if (!cols.includes(col)) {
         cols.push(col);
         this.columns.set(table, cols);
         const rows = this.tables.get(table) ?? [];
-        rows.forEach((row) => { if (!(col in row)) row[col] = null; });
+        rows.forEach((row) => { if (!(col in row)) row[col] = fill; });
       }
     }
 
@@ -124,20 +154,30 @@ class MockDBConnection {
     }
 
     const updateMatch = sql.match(
-      /UPDATE\s+(\w+)\s+SET\s+([\s\S]+?)\s+WHERE\s+([\s\S]+)/i
+      /UPDATE\s+(OR\s+REPLACE\s+)?(\w+)\s+SET\s+([\s\S]+?)\s+WHERE\s+([\s\S]+)/i
     );
     if (updateMatch && values) {
-      const table = updateMatch[1];
-      const setCols = updateMatch[2]
+      const orReplace = !!updateMatch[1];
+      const table = updateMatch[2];
+      const setCols = updateMatch[3]
         .split(",")
         .map((c) => c.trim().split(/\s*=\s*/)[0]);
-      const whereCols = updateMatch[3]
+      const whereCols = updateMatch[4]
         .split(/\s+AND\s+/i)
         .map((c) => c.trim().split(/\s*=\s*/)[0]);
       const whereValues = values.slice(setCols.length);
       const setValues = values.slice(0, setCols.length);
-      const rows = this.tables.get(table) || [];
+      let rows = this.tables.get(table) || [];
       let changes = 0;
+      // OR REPLACE: a row holding the new primary key, other than the updated one, is removed
+      const idAt = setCols.indexOf("id");
+      if (orReplace && idAt >= 0) {
+        const kept = rows.filter(
+          (row) => row.id !== setValues[idAt] || whereCols.every((col, i) => row[col] === whereValues[i])
+        );
+        this.tables.set(table, kept);
+        rows = kept;
+      }
       rows.forEach((row) => {
         const match = whereCols.every(
           (col, i) => row[col] === whereValues[i]
@@ -153,6 +193,13 @@ class MockDBConnection {
     }
 
     return { changes: { changes: 0 } };
+  }
+
+  /** Each statement of the set run in order, as one transaction would. */
+  async executeSet(set: { statement: string; values?: any[] }[], _transaction?: boolean) {
+    let changes = 0;
+    for (const s of set) changes += (await this.run(s.statement, s.values ?? [])).changes.changes;
+    return { changes: { changes } };
   }
 
   async query(sql: string, values?: any[]) {
@@ -173,17 +220,75 @@ class MockDBConnection {
       const table = selectMatch[2];
       let rows = this.tables.get(table) ?? [];
 
-      if (selectMatch[3] && values) {
-        const whereCols = selectMatch[3]
-          .split(/\s+AND\s+/i)
-          .map((c) => c.trim().split(/\s*=\s*\?/)[0].trim());
-        rows = rows.filter((row) =>
-          whereCols.every((col, i) => row[col] === values[i])
-        );
+      let where = selectMatch[3] ?? "";
+      const limitMatch = where.match(/\s*\bLIMIT\s+(\d+|\?)\s*$/i);
+      if (limitMatch) where = where.slice(0, limitMatch.index);
+      const orderMatch = where.match(/\s*\bORDER BY\s+(\w+(?:\s+(?:ASC|DESC))?(?:\s*,\s*\w+(?:\s+(?:ASC|DESC))?)*)\s*$/i);
+      if (orderMatch) where = where.slice(0, orderMatch.index);
+      const conds = where.trim()
+        ? where
+            .split(/\s+AND\s+/i)
+            .map((c) => {
+              const isNull = c.trim().match(/^(\w+)\s+IS\s+NULL$/i);
+              if (isNull) return { col: isNull[1], op: "IS NULL", escape: "", at: -1 };
+              const anyOf = c.trim().match(/^\((\w+\s*=\s*\d+(?:\s+OR\s+\w+\s*=\s*\d+)*)\)$/i);
+              if (anyOf) {
+                const pairs = anyOf[1].split(/\s+OR\s+/i).map((x) => x.split("=").map((y) => y.trim()));
+                return { col: "", op: "ANY", escape: "", at: -1, pairs: pairs.map(([k, v]) => [k, Number(v)] as [string, number]) };
+              }
+              const m = c.trim().match(/^(\w+)\s*(!=|>|<|=|LIKE)\s*\?(?:\s+ESCAPE\s+'(.)')?$/i);
+              return m ? { col: m[1], op: m[2].toUpperCase(), escape: m[3] ?? "", at: 0 } : { col: "", op: "=", escape: "", at: 0 };
+            })
+        : [] as { col: string; op: string; escape: string; at: number; pairs?: [string, number][] }[];
+      // Each `?` condition takes the next value; `IS NULL` takes none
+      let bound = 0;
+      for (const c of conds) if (c.at >= 0) c.at = bound++;
+      if (conds.length > 0 && (values || conds.some((c) => c.at < 0))) {
+        const test = (v: any, c: { op: string; escape: string }, x: any): boolean =>
+          c.op === "IS NULL" ? v === null || v === undefined
+            : c.op === "=" ? v === x : c.op === "!=" ? v !== x : c.op === ">" ? v > x : c.op === "<" ? v < x : sqliteLike(v, x, c.escape);
+        rows = rows.filter((row) => conds.every((c) => c.op === "ANY"
+          ? c.pairs!.some(([k, v]) => row[k] === v)
+          : test(row[c.col], c, c.at >= 0 ? values?.[c.at] : undefined)));
       }
+      if (orderMatch) {
+        const keys = orderMatch[1].split(",").map((k) => {
+          const [col, dir] = k.trim().split(/\s+/);
+          return { col, dir: dir?.toUpperCase() === "DESC" ? -1 : 1 };
+        });
+        // rowid is the place in the table: a row replaced goes last, as SQLite gives it a new rowid
+        const at = new Map(rows.map((r, i) => [r, i]));
+        const value = (r: Row, col: string) => (col.toLowerCase() === "rowid" ? at.get(r) : r[col]);
+        rows = [...rows].sort((a, b) => {
+          for (const { col, dir } of keys) {
+            const x = value(a, col);
+            const y = value(b, col);
+            if (x < y) return -dir;
+            if (x > y) return dir;
+          }
+          return 0;
+        });
+      }
+      if (limitMatch) rows = rows.slice(0, Number(limitMatch[1] === "?" ? values?.[bound] : limitMatch[1]));
 
       if (colList === "*") {
         return { values: rows };
+      }
+
+      // COALESCE(SUM(COALESCE(a, 0) + COALESCE(b, 0)), 0) AS alias
+      const sumMatch = colList.match(
+        /^COALESCE\(SUM\(COALESCE\((\w+), 0\) \+ COALESCE\((\w+), 0\)\), 0\) AS (\w+)$/i
+      );
+      if (sumMatch) {
+        const [, a, b, alias] = sumMatch;
+        const total = rows.reduce((sum, row) => sum + (row[a] ?? 0) + (row[b] ?? 0), 0);
+        return { values: [{ [alias]: total }] };
+      }
+      // COALESCE(SUM(a), 0) AS alias
+      const sumOne = colList.match(/^COALESCE\(SUM\((\w+)\), 0\) AS (\w+)$/i);
+      if (sumOne) {
+        const [, a, alias] = sumOne;
+        return { values: [{ [alias]: rows.reduce((sum, row) => sum + (row[a] ?? 0), 0) }] };
       }
 
       // Project specific columns

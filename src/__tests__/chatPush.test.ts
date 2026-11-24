@@ -1,0 +1,1257 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { SecureStoragePlugin } from "capacitor-secure-storage-plugin";
+import { createSyncEnv, installLocalStorage, resetMocks, setNetwork, type SyncEnv } from "../testing/syncTestKit";
+import { fakeChatPushNative, type FakeChatPushNative } from "../__mocks__/chatPushNative";
+import { OdooRpcClient, syncSessionKey, type SyncCredentials } from "../services/odoo/odooRpcClient";
+import { OutboxService } from "../services/outboxService";
+import { CapabilityService } from "../services/odoo/capabilityService";
+import { ChatService, type ChatSource } from "../services/chat/chatService";
+import { PUSH_RPC_TIMEOUT_MS, PUSH_STRING_KEYS, UNREGISTER_BOUND_MS } from "../services/chat/chatPush";
+import { ChatLifecycle } from "../services/chat/chatLifecycle";
+import { parseNtfyLink, type NtfyLink } from "../services/chat/chatPushLink";
+import { chatSettings } from "../services/chat/chatSettings";
+import { setHttpAllowed } from "../services/odoo/httpPolicy";
+import { AppService } from "../services/appService";
+import { DatabaseService } from "../services/databaseService";
+import { APP_MIGRATIONS } from "../services/migrations";
+import { ChatRepository } from "../services/chat/chatRepository";
+import { t } from "../i18n";
+import type { PushSettingsMirror } from "../plugins/chatPushPlugin";
+import type { StoreDelta } from "../services/chat/chatStore";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+const A = { url: "https://odoo.exemple.test", username: "alice", password: "pw", database: "db1" };
+const B = { url: "https://bureau.exemple.test", username: "alice", password: "pw", database: "db1" };
+const OLD = { url: "https://ancien.exemple.test", username: "alice", password: "pw", database: "db1" };
+
+const LINK = "erplibre-ntfy:setup?v=1&url=http%3A%2F%2Fntfy.exemple.test%3A8080&token=tk_exempleexempleexempleexemple"
+  + "&prefix=upab12cd34&cache=43200";
+const NTFY = "http://ntfy.exemple.test:8080";
+const ODOO_SIDE = "http://odoo-ntfy.exemple.test:8080";
+const VAPID = "BExempleVapidUn";
+
+const SELF = 3;
+const BOB = 4;
+const CHAT = 10;
+const GROUP = 11;
+const GENERAL = 12;
+
+const link = (over: Partial<NtfyLink> = {}): NtfyLink => ({ ...parseNtfyLink(LINK)!, ...over });
+
+/**
+ * A /mail/data answer: a chat with Bruno Tremblay, a group and a channel,
+ * each with the self member's counters and one message.
+ */
+function mailData(o: { chatUnread?: number; groupUnread?: number; mentions?: number } = {}) {
+  const channels: any[] = [];
+  const members: any[] = [];
+  const messages: any[] = [];
+  let memberId = 100;
+  const add = (id: number, type: string, name: string, unread: number, needaction: number, last: number) => {
+    channels.push({
+      id, channel_type: type, name, last_interest_dt: "2026-10-25 09:00:00",
+      message_needaction_counter: needaction, mute_until_dt: false, custom_notifications: false,
+    });
+    members.push({
+      id: memberId++, thread: { id, model: "discuss.channel" }, persona: { id: SELF, type: "partner" },
+      message_unread_counter: unread, new_message_separator: last - unread + 1, seen_message_id: last - unread,
+    });
+    if (type !== "channel") {
+      members.push({ id: memberId++, thread: { id, model: "discuss.channel" }, persona: { id: BOB, type: "partner" } });
+    }
+    messages.push({
+      id: last, body: `<p>m${last}</p>`, date: "2026-10-25 09:00:00", message_type: "comment",
+      author: { id: BOB, type: "partner" }, thread: { id, model: "discuss.channel" },
+    });
+  };
+  add(CHAT, "chat", "", o.chatUnread ?? 0, 0, 80);
+  add(GROUP, "group", "Équipe", o.groupUnread ?? 0, 0, 90);
+  add(GENERAL, "channel", "Général", 5, o.mentions ?? 0, 100);
+  return {
+    Store: { inbox: { counter: 0, counter_bus_id: 1000, id: "inbox", model: "mail.box" } },
+    "discuss.channel": channels,
+    "discuss.channel.member": members,
+    "mail.message": messages,
+    "res.partner": [{ id: SELF, name: "Alice Martin" }, { id: BOB, name: "Bruno Tremblay" }],
+  };
+}
+
+/**
+ * A fake Odoo per host: Odoo 17 on OLD's host, 18 elsewhere. mail.push.device
+ * keeps its devices by endpoint as Odoo does: register_devices refuses a
+ * VAPID key other than the server's and leaves a known endpoint as it is;
+ * `hang` keeps every unregister_devices call on the wire.
+ */
+function fakeOdoo() {
+  const calls: { host: string; path: string; params: any }[] = [];
+  const state = {
+    vapid: VAPID,
+    devices: new Map<string, { keys: any; host: string }>(),
+    /** The params of each call of the device route. */
+    marked: [] as any[],
+    data: mailData() as any,
+    hang: false,
+    /** register_devices on this host stays on the wire. */
+    hangRegister: null as string | null,
+    /** register_devices answers an Odoo error. */
+    refuseRegister: false,
+    /** register_devices answers once this settles. */
+    registerGate: null as Promise<void> | null,
+    /** unregister_devices answers after this many ms. */
+    unregisterDelayMs: 0,
+    /** Appended to the session id a login answers, to make a new session. */
+    sessionSuffix: "",
+    /** The device route answers an Odoo error. */
+    markRefuses: false,
+    /** Called as /mail/data is read. */
+    onMailData: null as (() => void) | null,
+  };
+  const ok = (result: unknown) => ({
+    ok: true, status: 200, text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result }), headers: { forEach: () => {} },
+  } as unknown as Response);
+  const rpcError = (name: string) => ({
+    ok: true, status: 200, headers: { forEach: () => {} },
+    text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: 200, message: "Odoo Server Error", data: { name, message: "refused" } } }),
+  } as unknown as Response);
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: { body: string }) => {
+    const u = new URL(url);
+    const params = JSON.parse(init.body).params;
+    calls.push({ host: u.hostname, path: u.pathname, params });
+    switch (u.pathname) {
+      case "/web/session/authenticate":
+        return ok({ uid: 2, session_id: `sid-${u.hostname}${state.sessionSuffix}`, server_version_info: [u.hostname.startsWith("ancien") ? 17 : 18, 0, 0, "final", 0, ""] });
+      case "/web/session/get_session_info":
+        return ok({
+          uid: 2, partner_id: SELF, is_system: false, websocket_worker_version: "18.0-7", is_internal_user: true,
+          storeData: { Store: { internalUserGroupId: 11, settings: { mute_until_dt: false } } },
+        });
+      case "/erplibre_mobile_chat/push/device":
+        state.marked.push(params);
+        if (state.markRefuses) return rpcError("odoo.exceptions.AccessError");
+        return ok({ ok: state.devices.has(params.endpoint) });
+      case "/mail/data":
+        state.onMailData?.();
+        return ok(JSON.parse(JSON.stringify(state.data)));
+      case "/web/dataset/call_kw": {
+        const { model, method, kwargs } = params;
+        if (model === "mail.push.device") {
+          if (method === "get_web_push_vapid_public_key") return ok(state.vapid);
+          if (method === "register_devices") {
+            if (state.hangRegister === u.hostname) return new Promise<Response>(() => {});
+            if (state.registerGate) await state.registerGate;
+            if (state.refuseRegister) return rpcError("odoo.exceptions.AccessError");
+            if (kwargs.vapid_public_key !== state.vapid) return rpcError("odoo.addons.mail.tools.jwt.InvalidVapidError");
+            if (!state.devices.has(kwargs.endpoint)) state.devices.set(kwargs.endpoint, { keys: kwargs.keys, host: u.hostname });
+            return ok(null);
+          }
+          if (method === "unregister_devices") {
+            if (state.hang) return new Promise<Response>(() => {});
+            if (state.unregisterDelayMs) await new Promise((r) => setTimeout(r, state.unregisterDelayMs));
+            state.devices.delete(kwargs.endpoint);
+            return ok(null);
+          }
+        }
+        if (method === "search_read") return ok([]);
+        if (method === "fields_get") return ok({});
+        return ok(true);
+      }
+      default:
+        return ok(true);
+    }
+  }));
+  const kw = (method: string) => calls.filter((c) => c.path === "/web/dataset/call_kw" && c.params.method === method);
+  return { calls, state, kw };
+}
+
+const settled = () => new Promise((r) => setTimeout(r, 0));
+
+describe("ChatPush", () => {
+  let env: SyncEnv;
+  let chat: ChatService;
+  let rpc: OdooRpcClient;
+  let native: FakeChatPushNative;
+  let odoo: ReturnType<typeof fakeOdoo>;
+  let clock: Date;
+  let ids: string[];
+
+  const build = async (targets = [A, B], versions = ["18.0", "18.0"]) => {
+    env = await createSyncEnv(targets);
+    rpc = new OdooRpcClient();
+    native = fakeChatPushNative();
+    chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock, { native });
+    for (const [i, t] of targets.entries()) await env.db.setApplicationOdooVersion(t.url, t.username, versions[i]);
+    ids = env.configIds;
+  };
+  const sources = async (): Promise<ChatSource[]> => chat.sources({ online: false });
+  const sourceOf = async (configId: string) => (await sources()).find((s) => s.configId === configId)!;
+  /** A load, then the push work it queued (registration, clearing, mirror) settled. */
+  const load = async (src: ChatSource) => {
+    await chat.load(src);
+    await chat.push.idle();
+  };
+  const credsOf = (t: typeof A): SyncCredentials => ({ odooUrl: t.url, username: t.username, password: t.password, database: t.database });
+  const storeSession = (t: typeof A, sessionId: string) => SecureStoragePlugin.set({
+    key: syncSessionKey(credsOf(t)),
+    // The session's age is checked against the real clock, not the test's
+    value: JSON.stringify({ sessionId, odooMajorVersion: 18, createdAt: new Date().toISOString() }),
+  });
+  const lastMirror = () => native.settings as PushSettingsMirror;
+  const indexOf = (method: string, test: (args: any) => boolean = () => true) =>
+    native.calls.findIndex((c) => c.method === method && test(c.args));
+
+  beforeEach(async () => {
+    resetMocks();
+    installLocalStorage({ allowHttp: true });
+    setNetwork({ connected: true, wifi: true });
+    clock = new Date("2026-10-28T10:00:00.000Z");
+    odoo = fakeOdoo();
+    await build();
+  });
+
+  afterEach(() => {
+    chat.dispose();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("the strings mirrored are the native fallback keys, each through t()", () => {
+    const java = readFileSync(resolve(ROOT, "android/app/src/main/java/ca/erplibre/home/chatpush/PushStrings.java"), "utf-8");
+    const javaKeys = [...java.matchAll(/FALLBACK\.put\("([a-z_]+)"/g)].map((m) => m[1]);
+    expect([...PUSH_STRING_KEYS].sort()).toEqual([...javaKeys].sort());
+    for (const key of PUSH_STRING_KEYS) expect(t(`chat.push_${key}`)).not.toBe(`chat.push_${key}`);
+    expect(t("chat.push_summary")).toBe("{n} nouveaux messages — {server}");
+    expect(PUSH_STRING_KEYS).toContain("action_unsent");
+    expect(t("chat.push_action_unsent")).toBe("Action non envoyée — {server}");
+  });
+
+  it("applyLink subscribes each account and registers its endpoint with the vapid key", async () => {
+    const result = await chat.push.applyLink(ids, link());
+    expect(result).toEqual({ ok: true, reason: null, registered: ids });
+    expect(native.callsOf("setNtfy")).toEqual([{ url: NTFY, token: "tk_exempleexempleexempleexemple", prefix: "upab12cd34", cacheSeconds: 43200 }]);
+    expect(native.callsOf("subscribe")).toEqual([
+      { configId: ids[0], ntfyUrl: NTFY, renew: true },
+      { configId: ids[1], ntfyUrl: NTFY, renew: true },
+    ]);
+    const registers = odoo.kw("register_devices");
+    expect(registers.map((c) => [c.host, c.params.kwargs])).toEqual([
+      ["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, keys: { p256dh: "pub1", auth: "auth1" }, vapid_public_key: VAPID, expirationTime: null }],
+      ["bureau.exemple.test", { endpoint: `${NTFY}/upab12cd34fake2`, keys: { p256dh: "pub2", auth: "auth2" }, vapid_public_key: VAPID, expirationTime: null }],
+    ]);
+    // The VAPID key is asked before each registration
+    const vapidAt = odoo.calls.findIndex((c) => c.params?.method === "get_web_push_vapid_public_key");
+    expect(vapidAt).toBeLessThan(odoo.calls.indexOf(registers[0]));
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({
+      configId: ids[0], ntfyUrl: NTFY, odooNtfyUrl: null, prefix: "upab12cd34", topic: "upab12cd34fake1",
+      endpoint: `${NTFY}/upab12cd34fake1`, p256dh: "pub1", auth: "auth1", vapidKey: VAPID,
+      registeredAt: clock.toISOString(), staleEndpoints: [], lockScreen: "hidden_locked",
+    });
+    // The settings go before setNtfy (an http ntfy needs allowHttp mirrored); an equal mirror is not sent again
+    expect(indexOf("publishSettings")).toBeLessThan(indexOf("setNtfy"));
+    expect(lastMirror().allowHttp).toBe(true);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual(ids);
+  });
+
+  it("the endpoint uses the Odoo-side url when the link has one", async () => {
+    await chat.push.applyLink([ids[0]], link({ odooUrl: ODOO_SIDE }));
+    expect(odoo.kw("register_devices")[0].params.kwargs.endpoint).toBe(`${ODOO_SIDE}/upab12cd34fake1`);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ odooNtfyUrl: ODOO_SIDE, endpoint: `${ODOO_SIDE}/upab12cd34fake1` });
+    // setOdooUrl moves the endpoint, unregisters the old one and registers the new one
+    await chat.push.setOdooUrl(ids[0], null);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${ODOO_SIDE}/upab12cd34fake1`]);
+    expect(odoo.kw("register_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${ODOO_SIDE}/upab12cd34fake1`, `${NTFY}/upab12cd34fake1`]);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ odooNtfyUrl: null, endpoint: `${NTFY}/upab12cd34fake1`, staleEndpoints: [] });
+  });
+
+  it("a refused token writes nothing", async () => {
+    native.ntfyRefusal = "unauthorized";
+    expect(await chat.push.applyLink(ids, link())).toEqual({ ok: false, reason: "unauthorized", registered: [] });
+    expect(native.callsOf("subscribe")).toEqual([]);
+    expect(odoo.kw("register_devices")).toEqual([]);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ ntfyUrl: null, endpoint: null, staleEndpoints: [] });
+  });
+
+  it("a wiped device is registered again at the next foreground load", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    // A VAPID wipe: every device goes and the server draws a new key
+    odoo.state.devices.clear();
+    odoo.state.vapid = "BExempleVapidDeux";
+    chat.push.newSession();
+    odoo.state.data = mailData();
+    await load(await sourceOf(ids[0]));
+    const registers = odoo.kw("register_devices").map((c) => c.params.kwargs);
+    expect(registers).toHaveLength(2);
+    expect(registers[1]).toEqual({ ...registers[0], vapid_public_key: "BExempleVapidDeux" });
+    expect(odoo.state.devices.has(`${NTFY}/upab12cd34fake1`)).toBe(true);
+    expect((await chat.repo.pushRow(ids[0])).vapidKey).toBe("BExempleVapidDeux");
+  });
+
+  it("registration happens once per foreground session", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    const src = await sourceOf(ids[0]);
+    await load(src);
+    await load(src);
+    expect(odoo.kw("register_devices")).toHaveLength(1);
+    chat.push.newSession();
+    await load(src);
+    await load(src);
+    expect(odoo.kw("register_devices")).toHaveLength(2);
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[1]))).toBe("none");
+  });
+
+  it("a new prefix moves every account to a new topic and unregisters the old endpoint", async () => {
+    await chat.push.applyLink(ids, link());
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    expect(native.callsOf("subscribe").slice(2)).toEqual([
+      { configId: ids[0], ntfyUrl: NTFY, renew: true },
+      { configId: ids[1], ntfyUrl: NTFY, renew: true },
+    ]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`, `${NTFY}/upab12cd34fake2`]);
+    // Each old endpoint leaves Odoo before the new one is registered
+    const at = (c: any) => odoo.calls.indexOf(c);
+    expect(at(odoo.kw("unregister_devices")[0])).toBeLessThan(at(odoo.kw("register_devices")[2]));
+    expect([...odoo.state.devices.keys()].sort()).toEqual([`${NTFY}/upcd34ef56fake3`, `${NTFY}/upcd34ef56fake4`]);
+    expect(await chat.repo.pushRow(ids[1])).toMatchObject({ prefix: "upcd34ef56", topic: "upcd34ef56fake4", staleEndpoints: [] });
+  });
+
+  it("an old endpoint that cannot be unregistered stays stale until the next session", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    setNetwork({ connected: false, wifi: false });
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ staleEndpoints: [`${NTFY}/upab12cd34fake1`], registeredAt: null });
+    setNetwork({ connected: true, wifi: true });
+    chat.push.newSession();
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("registered");
+    expect([...odoo.state.devices.keys()]).toEqual([`${NTFY}/upcd34ef56fake2`]);
+    expect((await chat.repo.pushRow(ids[0])).staleEndpoints).toEqual([]);
+  });
+
+  it("removeNtfy unregisters and unsubscribes", async () => {
+    await chat.push.applyLink(ids, link());
+    await chat.push.removeNtfy(ids[0]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: null }]);
+    expect(native.callsOf("removeNtfy")).toEqual([]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ ntfyUrl: null, topic: null, endpoint: null, staleEndpoints: [] });
+    // The last account on the server takes the server with it
+    await chat.push.removeNtfy(ids[1]);
+    expect(native.callsOf("removeNtfy")).toEqual([{ url: NTFY }]);
+    expect(native.ntfys.size).toBe(0);
+    expect(odoo.state.devices.size).toBe(0);
+  });
+
+  it("a removal online unregisters before the account goes", async () => {
+    await chat.push.applyLink(ids, link());
+    const apps = new AppService(env.db);
+    const order: string[] = [];
+    const remove = vi.spyOn(env.db, "deleteApplication");
+    apps.beforeDelete = async (configId) => {
+      await chat.push.forget(configId);
+      order.push(`forgotten:${remove.mock.calls.length}`);
+    };
+    apps.onChanged = async (change) => {
+      if (change.kind === "delete" && change.configId) await chat.forgetSource(change.configId);
+    };
+    native.calls.length = 0;
+    await apps.delete({ url: A.url, username: A.username });
+    expect(order).toEqual(["forgotten:0"]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: null }]);
+    expect(native.callsOf("forgetSession")).toEqual([{ configId: ids[0] }]);
+    // The session copy is let go before the mirror drops the account
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+    expect(indexOf("forgetSession")).toBeLessThan(drop);
+    expect(native.calls.filter((c) => c.method === "publishSettings").every((c) => !(c.args as any).accounts.some((a: any) => a.configId === ids[0]))).toBe(true);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[1]]);
+    expect(native.callsOf("removeNtfy")).toEqual([]);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ ntfyUrl: null, endpoint: null });
+  });
+
+  it("a removal offline leaves the endpoint to native code", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    await storeSession(A, "sid-a");
+    await chat.push.mirrorAll();
+    setNetwork({ connected: false, wifi: false });
+    odoo.calls.length = 0;
+    native.calls.length = 0;
+    await chat.push.forget(ids[0]);
+    expect(odoo.calls).toEqual([]);
+    expect(native.callsOf("unsubscribe")).toEqual([
+      { configId: ids[0], pendingEndpoint: `${NTFY}/upcd34ef56fake2` },
+    ]);
+    expect(native.callsOf("forgetSession")).toEqual([]);
+    expect(native.pending).toEqual([{ configId: ids[0], endpoint: `${NTFY}/upcd34ef56fake2` }]);
+    expect(native.sessions.has(ids[0])).toBe(true);
+    // The last account on the server takes the server with it, after the queue
+    expect(native.callsOf("removeNtfy")).toEqual([{ url: NTFY }]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+  });
+
+  it("a removal queues every endpoint not unregistered, stale ones included", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    setNetwork({ connected: false, wifi: false });
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    await chat.push.forget(ids[0]);
+    expect(native.callsOf("unsubscribe")).toEqual([
+      { configId: ids[0], pendingEndpoint: `${NTFY}/upcd34ef56fake2` },
+      { configId: ids[0], pendingEndpoint: `${NTFY}/upab12cd34fake1` },
+    ]);
+  });
+
+  it("an unregister that hangs is left to native code after 5 s", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    odoo.state.hang = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The 5 s count from the call; each check of waitFor moves the clock by its interval
+    const done = chat.push.forget(ids[0]);
+    await vi.waitFor(() => expect(odoo.kw("unregister_devices")).toHaveLength(1), { interval: 1 });
+    await vi.advanceTimersByTimeAsync(4800);
+    expect(native.callsOf("unsubscribe")).toEqual([]);
+    await vi.advanceTimersByTimeAsync(200);
+    await done;
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: `${NTFY}/upab12cd34fake1` }]);
+    expect(native.callsOf("forgetSession")).toEqual([]);
+  });
+
+  it("forget is bounded as a whole, its queue wait included", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await chat.push.applyLink(ids, link());
+    chat.push.newSession();
+    odoo.state.hangRegister = "odoo.exemple.test";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const hung = chat.push.ensureRegistered(await sourceOf(ids[0]));
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(3));
+    let forgotten = false;
+    const done = chat.push.forget(ids[1]).then(() => { forgotten = true; });
+    await vi.advanceTimersByTimeAsync(UNREGISTER_BOUND_MS - 100);
+    expect(forgotten).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await done;
+    // At the bound the endpoint is already native code's: no publish queued ahead can drop the account first
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
+    // The delete goes on: the account's rows are erased while the queue still waits
+    await chat.repo.dropSource(ids[1]);
+    await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
+    expect(await hung).toBe("offline");
+    await chat.push.idle();
+    // Past the bound no unregister starts: the endpoint goes to native code, which keeps the session copy for it
+    expect(odoo.kw("unregister_devices")).toEqual([]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[1], pendingEndpoint: `${NTFY}/upab12cd34fake2` }]);
+    expect(native.callsOf("forgetSession")).toEqual([]);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[0]]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[1]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+  });
+
+  describe("module 1.5", () => {
+    const at = (level: string | null, who = 0) => chat.repo.setSourceState({
+      configId: ids[who], moduleState: level === "1.5" ? "installed" : level ? "outdated" : "unknown", moduleLevel: level as any,
+    });
+    const routeCalls = () => odoo.calls.filter((c) => c.path === "/erplibre_mobile_chat/push/device");
+
+    it("a 1.5 account marks its device after registering", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false }]);
+      const calls = odoo.calls.map((c) => c.params?.method ?? c.path);
+      expect(calls.indexOf("/erplibre_mobile_chat/push/device")).toBeGreaterThan(calls.indexOf("register_devices"));
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+    });
+
+    it("a new session marks the device again", async () => {
+      await chat.push.start();
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toHaveLength(1);
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(odoo.state.marked).toHaveLength(2);
+      expect(odoo.state.marked[1]).toEqual(odoo.state.marked[0]);
+    });
+
+    it("a 1.4 account never calls the device route", async () => {
+      await chat.push.start();
+      await at("1.4");
+      await chat.push.applyLink([ids[0]], link());
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(routeCalls()).toEqual([]);
+      expect(lastMirror().accounts[0].module).toBe("1.4");
+    });
+
+    it("with the module ignored the device is not marked and the mirror says no module", async () => {
+      chat.dispose();
+      chat = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock, { native, moduleMode: "ignore" });
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toEqual([]);
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["", ""]);
+    });
+
+    it("a failed mark keeps the registration and shows the reason", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await chat.push.start();
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ registeredAt: clock.toISOString() });
+      expect(odoo.state.devices.has(`${NTFY}/upab12cd34fake1`)).toBe(true);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      expect(t("chat.push_registration_mark_failed")).not.toBe("chat.push_registration_mark_failed");
+      // a device Odoo does not hold answers ok false: the same reason, until a mark succeeds
+      odoo.state.markRefuses = false;
+      odoo.state.devices.clear();
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      odoo.state.devices.set(`${NTFY}/upab12cd34fake1`, { keys: {}, host: "odoo.exemple.test" });
+      odoo.state.sessionSuffix = "-3";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+      // the endpoint is never logged
+      for (const spy of [console.warn as any]) for (const c of spy.mock.calls) expect(JSON.stringify(c)).not.toContain("upab12cd34fake1");
+    });
+
+    it("a mark that failed is sent again at the next registration of the session", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toHaveLength(1);
+      odoo.state.markRefuses = false;
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(chat.push.registrationError(ids[0])).toBeNull();
+      // Marked: the next registration of the session sends nothing more
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(odoo.kw("register_devices")).toHaveLength(1);
+    });
+
+    it("a mark skipped offline is sent at the next registration of the session", async () => {
+      await chat.push.start();
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(routeCalls()).toHaveLength(1);
+      setNetwork({ connected: false, wifi: false });
+      odoo.state.sessionSuffix = "-2";
+      await rpc.authenticate(credsOf(A));
+      await chat.push.idle();
+      expect(routeCalls()).toHaveLength(1);
+      setNetwork({ connected: true, wifi: true });
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+    });
+
+    it("a mark Odoo answers ok false is not sent again in the session", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.5");
+      odoo.state.markRefuses = true;
+      await chat.push.applyLink([ids[0]], link());
+      odoo.state.markRefuses = false;
+      odoo.state.devices.clear();
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_mark_failed");
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(routeCalls()).toHaveLength(2);
+    });
+
+    it("the mirror carries the module level", async () => {
+      await at("1.5", 0);
+      await at("1.2", 1);
+      await chat.push.start();
+      await chat.push.publish();
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["1.5", "1.2"]);
+      await at(null, 1);
+      await chat.push.publish();
+      expect(lastMirror().accounts.map((a) => a.module)).toEqual(["1.5", ""]);
+    });
+
+    it("publish sends the action strings", async () => {
+      await chat.push.start();
+      const { strings } = lastMirror();
+      expect(strings.action_reply).toBe("Répondre");
+      for (const k of ["action_reply", "action_reply_hint", "action_mark_read", "action_mute", "action_react", "handoff_one", "handoff", "action_unsent"]) {
+        expect(strings[k]).toBeTruthy();
+      }
+    });
+  });
+
+  describe("module 1.6 and the push preferences", () => {
+    const at = (level: string | null, who = 0) => chat.repo.setSourceState({
+      configId: ids[who], moduleState: level === "1.6" ? "installed" : level ? "outdated" : "unknown", moduleLevel: level as any,
+    });
+    const routeCalls = () => odoo.calls.filter((c) => c.path === "/erplibre_mobile_chat/push/device");
+    const marks = () => routeCalls().map((c) => [c.host, c.params]);
+
+    it("a 1.6 server gets the browser mode", async () => {
+      await at("1.6");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" }]);
+      await chat.push.setBrowserMode("ring");
+      expect(odoo.state.marked.at(-1)).toEqual({ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "ring" });
+      expect(chatSettings().browserMode).toBe("ring");
+    });
+
+    it("a 1.5 server gets quiet_while_online only", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      await chat.push.setBrowserMode("quiet");
+      await chat.push.setBrowserMode("ring");
+      expect(odoo.state.marked).toEqual([
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: true },
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+      ]);
+    });
+
+    it("changing the browser mode marks every 1.5 and 1.6 account again", async () => {
+      await at("1.6", 0);
+      await at("1.5", 1);
+      await chat.push.applyLink(ids, link());
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("quiet");
+      expect(marks()).toEqual([
+        ["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "quiet" }],
+        ["bureau.exemple.test", { endpoint: `${NTFY}/upab12cd34fake2`, quiet_while_online: true }],
+      ]);
+      expect(lastMirror().browserMode).toBe("quiet");
+      // Offline, the mark is owed until a registration of the session sends it
+      setNetwork({ connected: false, wifi: false });
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("wait");
+      expect(marks()).toEqual([]);
+      expect(lastMirror().browserMode).toBe("wait");
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([true, true]);
+      setNetwork({ connected: true, wifi: true });
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(marks()).toEqual([["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" }]]);
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([false, true]);
+    });
+
+    it("a mirror native code refuses still marks every account again", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.6", 0);
+      await at("1.5", 1);
+      await chat.push.applyLink(ids, link());
+      odoo.calls.length = 0;
+      native.failNext("publishSettings");
+      await expect(chat.push.setBrowserMode("quiet")).rejects.toThrow();
+      expect(marks()).toEqual([
+        ["odoo.exemple.test", { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "quiet" }],
+        ["bureau.exemple.test", { endpoint: `${NTFY}/upab12cd34fake2`, quiet_while_online: true }],
+      ]);
+      // Offline, each mark is owed though the mirror failed
+      setNetwork({ connected: false, wifi: false });
+      native.failNext("publishSettings");
+      await expect(chat.push.setBrowserMode("ring")).rejects.toThrow();
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([true, true]);
+    });
+
+    it("a module upgraded in the session marks the device again for its new level", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      expect(odoo.state.marked).toEqual([{ endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false }]);
+      await at("1.6");
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(odoo.state.marked).toEqual([
+        { endpoint: `${NTFY}/upab12cd34fake1`, quiet_while_online: false },
+        { endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" },
+      ]);
+      // Marked for 1.6: the next registration of the session sends nothing more
+      await chat.push.ensureRegistered(await sourceOf(ids[0]));
+      expect(odoo.state.marked).toHaveLength(2);
+      expect(odoo.kw("register_devices")).toHaveLength(1);
+    });
+
+    it("an install or upgrade from the app queues the account's mark", async () => {
+      await at("1.5");
+      await chat.push.applyLink([ids[0]], link());
+      await at("1.6");
+      await chat.afterModuleChange(ids[0]);
+      await chat.push.idle();
+      expect(odoo.state.marked.at(-1)).toEqual({ endpoint: `${NTFY}/upab12cd34fake1`, browser_mode: "wait" });
+      expect(odoo.state.marked).toHaveLength(2);
+      // An application gone meanwhile queues nothing
+      await chat.afterModuleChange("https://absent.exemple.test|alice|db1");
+      await chat.push.idle();
+      expect(odoo.state.marked).toHaveLength(2);
+    });
+
+    it("changing the browser mode keeps a refused registration's reason", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await at("1.6");
+      odoo.state.refuseRegister = true;
+      await chat.push.applyLink([ids[0]], link());
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+      odoo.calls.length = 0;
+      await chat.push.setBrowserMode("quiet");
+      expect(routeCalls()).toEqual([]);
+      expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+      expect(lastMirror().browserMode).toBe("quiet");
+    });
+
+    it("an account without the module is never marked", async () => {
+      await at(null, 0);
+      await at("1.4", 1);
+      await chat.push.applyLink(ids, link());
+      await chat.push.setBrowserMode("quiet");
+      setNetwork({ connected: false, wifi: false });
+      await chat.push.setBrowserMode("ring");
+      expect(routeCalls()).toEqual([]);
+      expect(ids.map((id) => chat.push.markOwed(id))).toEqual([false, false]);
+      expect(lastMirror().browserMode).toBe("ring");
+    });
+
+    it("the mirror carries the phone and server preferences", async () => {
+      await chat.push.start();
+      expect(lastMirror()).toMatchObject({ climb: { auto: true, oneBelow: 30, twoBelow: 15 }, browserMode: "wait" });
+      for (const a of lastMirror().accounts) {
+        expect(a).toMatchObject({
+          filter: "all", inbox: true, inboxMentions: false, quiet: { on: false, from: 1320, to: 420 }, channelNotifications: null,
+        });
+      }
+      await chat.push.setClimb({ auto: false, oneBelow: 20, twoBelow: 0 });
+      expect(chatSettings()).toMatchObject({ climbAuto: false, climbOneBelow: 20, climbTwoBelow: 0 });
+      expect(lastMirror().climb).toEqual({ auto: false, oneBelow: 20, twoBelow: 0 });
+      await chat.push.setFilter(ids[0], "mentions_dm", false, true);
+      await chat.push.setQuietHours(ids[1], { on: true, from: 1380, to: 360 });
+      await chat.repo.setSourceState({ configId: ids[0], channelNotifications: "no_notif", channelNotificationsAt: clock.toISOString() });
+      await chat.push.publish();
+      const [first, second] = lastMirror().accounts;
+      expect(first).toMatchObject({
+        filter: "mentions_dm", inbox: false, inboxMentions: true, quiet: { on: false, from: 1320, to: 420 }, channelNotifications: "no_notif",
+      });
+      expect(second).toMatchObject({
+        filter: "all", inbox: true, inboxMentions: false, quiet: { on: true, from: 1380, to: 360 }, channelNotifications: null,
+      });
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ filter: "mentions_dm", inboxNotify: false, inboxMentions: true });
+      expect(await chat.repo.pushRow(ids[1])).toMatchObject({ quietOn: true, quietFrom: 1380, quietTo: 360 });
+      expect(await chat.repo.sourceState(ids[0])).toMatchObject({ channelNotifications: "no_notif", channelNotificationsAt: clock.toISOString() });
+    });
+
+    it("equal quiet bounds are refused", async () => {
+      await chat.push.start();
+      await expect(chat.push.setQuietHours(ids[0], { on: true, from: 600, to: 600 })).rejects.toThrow();
+      for (const bad of [{ from: -1, to: 420 }, { from: 1320, to: 1440 }, { from: 12.5, to: 420 }]) {
+        await expect(chat.push.setQuietHours(ids[0], { on: true, ...bad })).rejects.toThrow();
+      }
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ quietOn: false, quietFrom: 1320, quietTo: 420 });
+      // Off, the bounds are kept as given: the switch alone decides
+      await chat.push.setQuietHours(ids[0], { on: false, from: 600, to: 600 });
+      expect(await chat.repo.pushRow(ids[0])).toMatchObject({ quietOn: false, quietFrom: 600, quietTo: 600 });
+      expect(lastMirror().accounts[0].quiet).toEqual({ on: false, from: 600, to: 600 });
+    });
+
+    it("a renamed account keeps its preferences", async () => {
+      await chat.push.start();
+      await chat.push.applyLink([ids[0]], link());
+      await chat.push.setFilter(ids[0], "none", false, false);
+      await chat.push.setQuietHours(ids[0], { on: true, from: 1200, to: 480 });
+      await chat.push.idle();
+      const apps = new AppService(env.db);
+      new ChatLifecycle(chat).followApplications(apps);
+      const app = (await env.db.getAllApplications())[0];
+      const renamed = `${A.url}/|alice|db1`;
+      await apps.edit({ url: A.url, username: A.username }, { ...app, url: `${A.url}/` });
+      await chat.push.idle();
+      await chat.push.idle();
+      expect(await chat.repo.pushRow(renamed)).toMatchObject({
+        endpoint: `${NTFY}/upab12cd34fake2`, filter: "none", inboxNotify: false, inboxMentions: false,
+        quietOn: true, quietFrom: 1200, quietTo: 480,
+      });
+      expect(lastMirror().accounts.find((a) => a.configId === renamed)).toMatchObject({
+        filter: "none", inbox: false, quiet: { on: true, from: 1200, to: 480 },
+      });
+    });
+  });
+
+  it("a registration failure reason is shown until the next success", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await chat.push.applyLink([ids[0]], link());
+    expect(chat.push.registrationError(ids[0])).toBeNull();
+    chat.push.newSession();
+    setNetwork({ connected: false, wifi: false });
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("offline");
+    expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_offline");
+    setNetwork({ connected: true, wifi: true });
+    odoo.state.refuseRegister = true;
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("refused");
+    expect(chat.push.registrationError(ids[0])).toBe("chat.push_registration_refused");
+    expect(t("chat.push_registration_refused")).not.toBe("chat.push_registration_refused");
+    expect(chat.push.registrationError(ids[1])).toBeNull();
+    chat.push.newSession();
+    odoo.state.refuseRegister = false;
+    expect(await chat.push.ensureRegistered(await sourceOf(ids[0]))).toBe("registered");
+    expect(chat.push.registrationError(ids[0])).toBeNull();
+  });
+
+  it("removing an application through the app wiring reaches push.forget before the row goes", async () => {
+    await chat.push.applyLink(ids, link());
+    const apps = new AppService(env.db);
+    new ChatLifecycle(chat).followApplications(apps);
+    const forget = vi.spyOn(chat.push, "forget");
+    const remove = vi.spyOn(env.db, "deleteApplication");
+    native.calls.length = 0;
+    await apps.delete({ url: A.url, username: A.username });
+    await chat.push.idle();
+    expect(forget).toHaveBeenCalledWith(ids[0]);
+    expect(forget.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual([ids[1]]);
+    expect(await chat.repo.pushRows()).toHaveLength(1);
+  });
+
+  it("a renamed account moves to a new topic on the same Odoo, the old endpoint unregistered", async () => {
+    await chat.push.start();
+    await chat.push.applyLink([ids[0]], link());
+    // The session copy the registration's login queued
+    await chat.push.idle();
+    const apps = new AppService(env.db);
+    new ChatLifecycle(chat).followApplications(apps);
+    const app = (await env.db.getAllApplications())[0];
+    const renamed = `${A.url}/|alice|db1`;
+    native.calls.length = 0;
+    odoo.calls.length = 0;
+    await apps.edit({ url: A.url, username: A.username }, { ...app, url: `${A.url}/` });
+    await chat.push.idle();
+    await chat.push.idle();
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: null }]);
+    expect(native.callsOf("forgetSession")).toEqual([{ configId: ids[0] }]);
+    expect(native.callsOf("subscribe")).toEqual([{ configId: renamed, ntfyUrl: NTFY, renew: true }]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    expect(odoo.kw("register_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake2`]);
+    expect(await chat.repo.pushRow(renamed)).toMatchObject({ endpoint: `${NTFY}/upab12cd34fake2`, staleEndpoints: [], vapidKey: VAPID });
+    expect(native.callsOf("mirrorSession")).toEqual([{ configId: renamed, odooUrl: `${A.url}/`, database: "db1", sessionId: "sid-odoo.exemple.test" }]);
+    // The new id's session is copied before the first mirror that names it
+    const named = indexOf("publishSettings", (o) => o.accounts.some((a: any) => a.configId === renamed));
+    expect(named).toBeGreaterThanOrEqual(0);
+    expect(indexOf("mirrorSession", (o) => o.configId === renamed)).toBeLessThan(named);
+    // The old id goes before the mirror that drops it; the new one is in the last mirror
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(drop).toBeGreaterThanOrEqual(0);
+    expect(indexOf("forgetSession")).toBeLessThan(drop);
+    expect(lastMirror().accounts.map((a) => a.configId)).toEqual([renamed, ids[1]]);
+  });
+
+  it("an account moved to another database leaves its old endpoint to native code", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    const app = (await env.db.getAllApplications())[0];
+    const moved = `${A.url}|alice|db2`;
+    await env.db.updateApplication(A.url, A.username, { ...app, database: "db2" });
+    await env.db.renameSyncConfigId(ids[0], moved);
+    native.calls.length = 0;
+    odoo.calls.length = 0;
+    await chat.push.rekey(ids[0], moved);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: `${NTFY}/upab12cd34fake1` }]);
+    expect(native.callsOf("forgetSession")).toEqual([]);
+    expect(native.callsOf("subscribe")).toEqual([{ configId: moved, ntfyUrl: NTFY, renew: true }]);
+    expect(odoo.kw("unregister_devices")).toEqual([]);
+    expect(odoo.kw("register_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake2`]);
+    expect(await chat.repo.pushRow(moved)).toMatchObject({ endpoint: `${NTFY}/upab12cd34fake2`, staleEndpoints: [] });
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+    expect(lastMirror().accounts.map((a) => a.configId)).toContain(moved);
+  });
+
+  it("an edit to another login lets the old account go before its application changes", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    await chat.push.idle();
+    const apps = new AppService(env.db);
+    new ChatLifecycle(chat).followApplications(apps);
+    const forget = vi.spyOn(chat.push, "forget");
+    const update = vi.spyOn(env.db, "updateApplication");
+    const app = (await env.db.getAllApplications())[0];
+    native.calls.length = 0;
+    await apps.edit({ url: A.url, username: A.username }, { ...app, username: "bruno" });
+    await chat.push.idle();
+    expect(forget).toHaveBeenCalledWith(ids[0]);
+    expect(forget.mock.invocationCallOrder[0]).toBeLessThan(update.mock.invocationCallOrder[0]);
+    expect(odoo.kw("unregister_devices").map((c) => c.params.kwargs.endpoint)).toEqual([`${NTFY}/upab12cd34fake1`]);
+    expect(native.callsOf("unsubscribe")).toEqual([{ configId: ids[0], pendingEndpoint: null }]);
+    const drop = indexOf("publishSettings", (o) => !o.accounts.some((a: any) => a.configId === ids[0]));
+    expect(indexOf("unsubscribe")).toBeLessThan(drop);
+    expect(await chat.repo.pushRow(ids[0])).toMatchObject({ ntfyUrl: null, endpoint: null });
+    // A url spelled differently renames instead: no forget
+    forget.mockClear();
+    await apps.edit({ url: B.url, username: B.username }, { ...(await env.db.getAllApplications())[1], url: `${B.url}/` });
+    expect(forget).not.toHaveBeenCalled();
+  });
+
+  it("a registration queued behind a forget or a rekey copies no session of the old id", async () => {
+    await storeSession(A, "sid-a");
+    const src = await sourceOf(ids[0]);
+    native.calls.length = 0;
+    const forgotten = chat.push.forget(ids[0]);
+    const late = chat.push.ensureRegistered(src);
+    await forgotten;
+    expect(await late).toBe("none");
+    expect(native.callsOf("mirrorSession")).toEqual([]);
+    // A rekey: the old id is no longer an account
+    const srcB = await sourceOf(ids[1]);
+    await storeSession(B, "sid-b");
+    const app = (await env.db.getAllApplications())[1];
+    const renamed = `${B.url}/|alice|db1`;
+    await env.db.updateApplication(B.url, B.username, { ...app, url: `${B.url}/` });
+    await env.db.renameSyncConfigId(ids[1], renamed);
+    native.calls.length = 0;
+    const moved = chat.push.rekey(ids[1], renamed);
+    const stale = chat.push.ensureRegistered(srcB);
+    await moved;
+    await stale;
+    expect(native.callsOf("mirrorSession").filter((o: any) => o.configId === ids[1])).toEqual([]);
+  });
+
+  it("a rename that did not move the rows changes nothing", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    native.calls.length = 0;
+    await chat.push.rekey(ids[0], `${A.url}/|alice|db1`);
+    expect(native.callsOf("unsubscribe")).toEqual([]);
+    expect(native.callsOf("subscribe")).toEqual([]);
+  });
+
+  it("a load resolves while a registration hangs", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    chat.push.newSession();
+    odoo.state.hangRegister = "odoo.exemple.test";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await expect(chat.load(await sourceOf(ids[0]))).resolves.toBeUndefined();
+    expect((await chat.repo.sourceState(ids[0])).loadedAt).toBe(clock.toISOString());
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(2));
+    await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
+    await chat.push.idle();
+  });
+
+  it("a hung registration times out and the next account's work runs", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await chat.push.applyLink(ids, link());
+    chat.push.newSession();
+    odoo.state.hangRegister = "odoo.exemple.test";
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const first = chat.push.ensureRegistered(await sourceOf(ids[0]));
+    const second = chat.push.ensureRegistered(await sourceOf(ids[1]));
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(3));
+    await vi.advanceTimersByTimeAsync(PUSH_RPC_TIMEOUT_MS);
+    expect(await first).toBe("offline");
+    expect(await second).toBe("registered");
+    expect(odoo.kw("register_devices")).toHaveLength(4);
+  });
+
+  it("dispose stops following the http option", async () => {
+    await chat.push.start();
+    chat.dispose();
+    native.calls.length = 0;
+    setHttpAllowed(false);
+    await chat.push.idle();
+    expect(native.callsOf("publishSettings")).toEqual([]);
+  });
+
+  it("level 5 forgets every session copy", async () => {
+    await storeSession(A, "sid-a");
+    await storeSession(B, "sid-b");
+    await chat.push.start();
+    expect([...native.sessions.keys()].sort()).toEqual([...ids].sort());
+    await chat.push.setLevel(5);
+    expect(chatSettings().notifyLevel).toBe(5);
+    expect(native.callsOf("forgetSession")).toEqual([{ configId: ids[0] }, { configId: ids[1] }]);
+    expect(native.sessions.size).toBe(0);
+    expect(lastMirror().level).toBe(5);
+    // Back under 5, the stored sessions are copied again before the mirror that says so
+    native.calls.length = 0;
+    await chat.push.setLevel(3);
+    expect(native.sessions.get(ids[0])).toEqual({ odooUrl: A.url, database: "db1", sessionId: "sid-a" });
+    expect(indexOf("mirrorSession")).toBeLessThan(indexOf("publishSettings"));
+    expect(lastMirror().level).toBe(3);
+  });
+
+  it("a session is mirrored only for chat accounts at levels 1 to 4", async () => {
+    await build([A, OLD], ["", ""]);
+    // At start, a stored session is copied without logging in again
+    await storeSession(A, "sid-stored");
+    await chat.push.start();
+    expect(odoo.calls).toEqual([]);
+    expect(native.callsOf("mirrorSession")).toEqual([]);
+    await chat.sources({ online: true });
+    await chat.push.idle();
+    // sources() logs in on the Odoo 17 account to learn its version: nothing is copied
+    expect(odoo.calls.filter((c) => c.path === "/web/session/authenticate").map((c) => c.host)).toEqual(["ancien.exemple.test"]);
+    expect(native.callsOf("mirrorSession")).toEqual([]);
+    native.calls.length = 0;
+    await rpc.authenticate(credsOf(A));
+    await rpc.authenticate(credsOf(OLD));
+    await chat.push.idle();
+    expect(native.callsOf("mirrorSession")).toEqual([
+      { configId: ids[0], odooUrl: A.url, database: "db1", sessionId: "sid-odoo.exemple.test" },
+    ]);
+    // The account is in the mirror published after its session copy
+    const after = native.calls.slice(indexOf("mirrorSession"));
+    expect(after.some((c) => c.method === "publishSettings" && (c.args as any).accounts.some((a: any) => a.configId === ids[0]))).toBe(true);
+    await chat.push.setLevel(5);
+    native.calls.length = 0;
+    await rpc.authenticate(credsOf(A));
+    await chat.push.idle();
+    expect(native.callsOf("mirrorSession")).toEqual([]);
+  });
+
+  it("a load copies the stored session of a new account once per session", async () => {
+    await chat.push.start();
+    const src = await sourceOf(ids[0]);
+    await load(src);
+    expect(native.callsOf("mirrorSession")).toEqual([
+      { configId: ids[0], odooUrl: A.url, database: "db1", sessionId: "sid-odoo.exemple.test" },
+    ]);
+    const mirrored = indexOf("mirrorSession");
+    expect(native.calls.slice(mirrored).some((c) => c.method === "publishSettings")).toBe(true);
+    await load(src);
+    expect(native.callsOf("mirrorSession")).toHaveLength(1);
+  });
+
+  it("turning Autoriser http on publishes the settings", async () => {
+    setHttpAllowed(false);
+    await chat.push.start();
+    expect(lastMirror().allowHttp).toBe(false);
+    setHttpAllowed(true);
+    await chat.push.idle();
+    expect(lastMirror().allowHttp).toBe(true);
+  });
+
+  it("publish sends labels, lock screen and conversation names", async () => {
+    await load(await sourceOf(ids[0]));
+    await chat.push.setLockScreen(ids[0], "always");
+    const mirror = lastMirror();
+    expect(mirror.level).toBe(3);
+    expect(mirror.allowHttp).toBe(true);
+    expect(Object.keys(mirror.strings).sort()).toEqual([...PUSH_STRING_KEYS].sort());
+    expect(mirror.strings.new_message_server).toBe("Nouveau message — {server}");
+    expect(mirror.strings.you).toBe("Vous");
+    expect(mirror.accounts.map((a) => [a.configId, a.label, a.lockScreen])).toEqual([
+      [ids[0], "odoo", "always"],
+      [ids[1], "bureau", "hidden_locked"],
+    ]);
+    expect([...mirror.accounts[0].channels].sort((x, y) => x.id - y.id)).toEqual([
+      { id: CHAT, name: "Bruno Tremblay", type: "chat" },
+      { id: GROUP, name: "Équipe", type: "group" },
+      { id: GENERAL, name: "Général", type: "channel" },
+    ]);
+    expect(mirror.accounts[1].channels).toEqual([]);
+    expect((await chat.repo.pushRow(ids[0])).lockScreen).toBe("always");
+  });
+
+  it("an unchanged mirror is not sent again", async () => {
+    await chat.push.publish();
+    await chat.push.publish();
+    expect(native.callsOf("publishSettings")).toHaveLength(1);
+  });
+
+  it("a load clears notifications of conversations read elsewhere", async () => {
+    native.shownTags = [`chat:${ids[0]}:${CHAT}`, `chat:${ids[0]}:${GROUP}`, `chat:${ids[0]}:${GENERAL}`, `summary:${ids[0]}`, `chat:${ids[1]}:${CHAT}`];
+    odoo.state.data = mailData({ chatUnread: 0, groupUnread: 2, mentions: 0 });
+    await load(await sourceOf(ids[0]));
+    const start = clock.getTime();
+    expect(native.callsOf("clear")).toEqual([
+      { configId: ids[0], channelId: CHAT, before: start },
+      { configId: ids[0], channelId: GENERAL, before: start },
+      { configId: ids[0], summary: true, before: start },
+    ]);
+    expect(native.shownTags).toEqual([`chat:${ids[0]}:${GROUP}`, `chat:${ids[1]}:${CHAT}`]);
+  });
+
+  it("a load leaves what was posted after it started", async () => {
+    const start = clock.getTime();
+    const chatTag = `chat:${ids[0]}:${CHAT}`;
+    const summary = `summary:${ids[0]}`;
+    native.shownTags = [chatTag, summary];
+    // Posted while the load read the server: the load did not see them
+    native.shownAt.set(chatTag, start + 1000);
+    native.shownAt.set(summary, start + 1000);
+    odoo.state.onMailData = () => { clock = new Date(start + 60000); };
+    odoo.state.data = mailData({ chatUnread: 0 });
+    await load(await sourceOf(ids[0]));
+    expect(native.callsOf("clear")).toEqual([
+      { configId: ids[0], channelId: CHAT, before: start },
+      { configId: ids[0], summary: true, before: start },
+    ]);
+    expect(native.shownTags).toEqual([chatTag, summary]);
+  });
+
+  it("a load clears the inbox notifications of records read, every one once the inbox is empty", async () => {
+    const start = clock.getTime();
+    const tag = (model: string, id: number) => `inbox:${ids[0]}:${model}:${id}`;
+    native.shownTags = [tag("res.partner", 70), tag("project.task", 7), tag("res.partner", 71)];
+    const delta: StoreDelta = {
+      channels: [], deletedChannelIds: [], members: [], deletedMemberIds: [], messages: [], partners: [], attachments: [],
+      deletedAttachmentIds: [], inboxCounter: null, selfPartnerId: null,
+      mailbox: [
+        { messageId: 501, threadModel: "res.partner", threadId: 70, needaction: false, history: true },
+        { messageId: 502, threadModel: "project.task", threadId: 7, needaction: true },
+        { messageId: 499, threadModel: "project.task", threadId: 7, needaction: false, history: true },
+      ],
+    };
+    await chat.repo.applyDelta(ids[0], delta);
+    const counted = (counter: number) => ({ ...mailData(), Store: { inbox: { counter, counter_bus_id: 1000, id: "inbox", model: "mail.box" } } });
+    // Read in the app: the record's items are in the history, none in the inbox; a record the phone never saw stays
+    odoo.state.data = counted(2);
+    const src = await sourceOf(ids[0]);
+    await load(src);
+    expect(native.callsOf("clear").filter((o: any) => o.inbox)).toEqual([
+      { configId: ids[0], inbox: true, model: "res.partner", resId: 70, before: start },
+    ]);
+    expect(native.shownTags).toEqual([tag("project.task", 7), tag("res.partner", 71)]);
+    // Read elsewhere: an empty inbox takes every inbox notification
+    odoo.state.data = counted(0);
+    await load(src);
+    expect(native.shownTags).toEqual([]);
+  });
+
+  it("a registration that lands after a rename writes no row for the old id", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    chat.push.newSession();
+    let release!: () => void;
+    odoo.state.registerGate = new Promise<void>((r) => { release = r; });
+    const late = chat.push.ensureRegistered(await sourceOf(ids[0]));
+    await vi.waitFor(() => expect(odoo.kw("register_devices")).toHaveLength(2));
+    const app = (await env.db.getAllApplications())[0];
+    const renamed = `${A.url}/|alice|db1`;
+    await env.db.updateApplication(A.url, A.username, { ...app, url: `${A.url}/` });
+    await env.db.renameSyncConfigId(ids[0], renamed);
+    const moved = chat.push.rekey(ids[0], renamed);
+    release();
+    await late;
+    await moved;
+    expect((await chat.repo.pushRows()).map((r) => r.configId)).not.toContain(ids[0]);
+    expect(native.callsOf("subscribe")).toContainEqual({ configId: renamed, ntfyUrl: NTFY, renew: true });
+    expect((await chat.repo.pushRow(renamed)).endpoint).toBe(`${NTFY}/upab12cd34fake2`);
+  });
+
+  it("an unregister that answers after the 5 s bound starts no other", async () => {
+    await chat.push.applyLink([ids[0]], link());
+    setNetwork({ connected: false, wifi: false });
+    await chat.push.applyLink([ids[0]], link({ prefix: "upcd34ef56" }));
+    setNetwork({ connected: true, wifi: true });
+    odoo.state.unregisterDelayMs = 6000;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const done = chat.push.forget(ids[0]);
+    await vi.waitFor(() => expect(odoo.kw("unregister_devices")).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(native.callsOf("unsubscribe")).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(odoo.kw("unregister_devices")).toHaveLength(1);
+  });
+
+  it("a push failure never fails the load", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    native.failNext("shown");
+    native.failNext("publishSettings");
+    await expect(chat.load(await sourceOf(ids[0]))).resolves.toBeUndefined();
+    expect((await chat.repo.sourceState(ids[0])).loadedAt).toBe(clock.toISOString());
+  });
+
+  it("without native code every method does nothing", async () => {
+    const bare = new ChatService(env.db, rpc, new OutboxService(env.db, () => clock), new CapabilityService(env.db, rpc), () => clock);
+    await bare.push.start();
+    expect(await bare.push.applyLink(ids, link())).toEqual({ ok: false, reason: "unavailable", registered: [] });
+    expect(await bare.push.ensureRegistered(await sourceOf(ids[0]))).toBe("none");
+    await bare.push.forget(ids[0]);
+    await bare.push.publish();
+    await settled();
+    expect(odoo.calls).toEqual([]);
+    bare.dispose();
+  });
+});
+
+describe("migration 2026102801", () => {
+  let db: DatabaseService;
+  const migration = () => APP_MIGRATIONS.find((m) => m.version === 2026102801)!;
+  const colsOf = async (t: string) => (await db.rawQuery(`PRAGMA table_info(${t})`)).map((c) => c.name);
+  const PUSH_COLS = [
+    "config_id", "ntfy_url", "odoo_ntfy_url", "prefix", "topic", "endpoint", "p256dh", "auth", "vapid_key",
+    "registered_at", "stale_endpoints", "lock_screen",
+    "phone_filter", "inbox_notify", "inbox_mentions", "quiet_on", "quiet_from", "quiet_to",
+  ];
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+  });
+
+  it("follows 2026102705 and adds the table once", async () => {
+    const versions = APP_MIGRATIONS.map((m) => m.version);
+    expect(versions[versions.indexOf(2026102801) - 1]).toBe(2026102705);
+    expect(versions[versions.indexOf(2026102801) + 1]).toBe(2026103001);
+    expect(migration().description).toBe("Clavardage : notifications par ntfy, par compte");
+    await migration().run(db);
+    const repo = new ChatRepository(db);
+    await repo.setPushRow({ configId: "c", lockScreen: "never" });
+    await migration().run(db);
+    expect(await colsOf("chat_push")).toEqual(PUSH_COLS);
+    expect(await repo.pushRow("c")).toMatchObject({ lockScreen: "never" });
+  });
+
+  it("a fresh install has it from the chat tables", async () => {
+    await db.createChatTables();
+    expect(await colsOf("chat_push")).toEqual(PUSH_COLS);
+  });
+});
+
+describe("ChatRepository push rows", () => {
+  let db: DatabaseService;
+  let repo: ChatRepository;
+  const C1 = "https://odoo.exemple.test|alice|db1";
+  const C2 = "https://odoo.exemple.test/|alice|db1";
+
+  beforeEach(async () => {
+    SecureStoragePlugin._store.clear();
+    db = new DatabaseService();
+    await db.initialize();
+    await db.createChatTables();
+    repo = new ChatRepository(db);
+  });
+
+  it("an account without a row reads as no ntfy, hidden when locked", async () => {
+    expect(await repo.pushRow(C1)).toEqual({
+      configId: C1, ntfyUrl: null, odooNtfyUrl: null, prefix: null, topic: null, endpoint: null, p256dh: null,
+      auth: null, vapidKey: null, registeredAt: null, staleEndpoints: [], lockScreen: "hidden_locked",
+      filter: "all", inboxNotify: true, inboxMentions: false, quietOn: false, quietFrom: 1320, quietTo: 420,
+    });
+    expect(await repo.pushRows()).toEqual([]);
+  });
+
+  it("setPushRow writes only the fields given; an unknown lock screen reads as the default", async () => {
+    await repo.setPushRow({ configId: C1, ntfyUrl: NTFY, staleEndpoints: ["e1"] });
+    await repo.setPushRow({ configId: C1, lockScreen: "always" });
+    expect(await repo.pushRow(C1)).toMatchObject({ ntfyUrl: NTFY, staleEndpoints: ["e1"], lockScreen: "always" });
+    await db.rawRun("UPDATE chat_push SET lock_screen = ?, stale_endpoints = ? WHERE config_id = ?", ["sometimes", "{bad", C1]);
+    expect(await repo.pushRow(C1)).toMatchObject({ lockScreen: "hidden_locked", staleEndpoints: [] });
+    // Unreadable preferences read as their defaults
+    await repo.setPushRow({ configId: C1, filter: "none", inboxNotify: false, quietFrom: 0, quietTo: 1439 });
+    expect(await repo.pushRow(C1)).toMatchObject({ filter: "none", inboxNotify: false, quietFrom: 0, quietTo: 1439 });
+    await db.rawRun("UPDATE chat_push SET phone_filter = ?, quiet_from = ?, quiet_to = ? WHERE config_id = ?", ["some", 1440, -1, C1]);
+    expect(await repo.pushRow(C1)).toMatchObject({ filter: "all", quietFrom: 1320, quietTo: 420 });
+  });
+
+  it("rename and drop source cover chat_push", async () => {
+    await repo.setPushRow({ configId: C1, ntfyUrl: NTFY, endpoint: `${NTFY}/upab12cd34x` });
+    await db.renameSyncConfigId(C1, C2);
+    expect(await repo.pushRow(C1)).toMatchObject({ ntfyUrl: null });
+    expect(await repo.pushRow(C2)).toMatchObject({ configId: C2, ntfyUrl: NTFY, endpoint: `${NTFY}/upab12cd34x` });
+    await repo.dropSource(C2);
+    expect(await repo.pushRows()).toEqual([]);
+  });
+});

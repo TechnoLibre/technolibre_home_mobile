@@ -37,3 +37,6 @@ export function onWillUnmount(_cb: () => void): void {}
 export function useRef(_name: string): { el: null } { return { el: null }; }
 export async function mount(..._args: unknown[]): Promise<unknown> { return null; }
 export const App: any = class { static registerTemplate() {} };
+
+/** Identity: tests read the markup as the plain string it wraps. */
+export function markup<T>(value: T): T { return value; }

@@ -1,0 +1,8 @@
+{
+  "ua_private_pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgnh6Ko9OxgFQZ5wZnJ+Z161JEbzWnAe4KsyAb5m9ZlN2hRANCAAQuEZaR3bNH6S4SltYHpS7pnW4Xfd4yTzuqBEG9vbKr0wr1JxDqFspdk3vIkcUGkMutqPkC2tSma2KbiivGrtVu",
+  "ua_public": "BC4RlpHds0fpLhKW1gelLumdbhd93jJPO6oEQb29sqvTCvUnEOoWyl2Te8iRxQaQy62o-QLa1KZrYpuKK8au1W4",
+  "auth": "u_5rU84fBN2uxwq4TA8HOQ",
+  "body": "0dpW+xYubDcNLEZl2fhQ/wAAEABBBE6IuPuoG6Zlvyh2S4Hqc1Mi3DG23kjYcYi+loBtDqDuN/YLGQr67dBmdRuoFh5aUsnKyPFHjkJJ/0SEydQO+t6Jh/LdquXCde3bTmdaimwddSJiuD6WMqAHaTaSVfowo8KX9uPU5HuAGboSFVk1N1lMn+AfnwoFP6tgwPvY178o6sfWuZZHFj9NIjBLjKLF9xGfnrhVWQg3dk508Pr4tWJuXcC6t33Dv6rUWYUzGTVxulCeoKw3s6ktxoDtThxDgqtIpcmf69VPT5vZhi6cmuDrxtSI2qCcqkLjr7l3+pglnsY8WtJmPZZuVoAzb0s+7Ih/sqsucOOCm2xe/5heq5Gykkk+ykjJ+C2BR7v2cZJfSi6yTjv63+2uB/sAF0X4cQ==",
+  "encoding": "base64",
+  "plaintext": "{\"title\": \"MS Chat\", \"options\": {\"icon\": \"/web/image/res.partner/9/avatar_128\", \"data\": {\"model\": \"discuss.channel\", \"res_id\": 4, \"action\": \"mail.action_discuss\"}, \"body\": \"Bonjour du test de notification\"}}"
+}

@@ -9,26 +9,7 @@ import { IntentService } from "../services/intentService";
 import { NoteService } from "../services/note/noteService";
 import { DatabaseService } from "../services/databaseService";
 import { runMigrations } from "../services/migrationService";
-import { migrateFromSecureStorage } from "../services/dataMigration";
-import { migrateVideoThumbnails } from "../services/migrations/migrateVideoThumbnails";
-import { addSyncColumns } from "../services/migrations/addSyncColumns";
-import { addSyncConfigId } from "../services/migrations/addSyncConfigId";
-import { addReminderCreatedAt } from "../services/migrations/addReminderCreatedAt";
-import { addApplicationSyncFields } from "../services/migrations/addApplicationSyncFields";
-import { addUserGraphicPrefs } from "../services/migrations/addUserGraphicPrefs";
-import { addSelectedSyncConfigIds } from "../services/migrations/addSelectedSyncConfigIds";
-import { addOdooVersionToApplications } from "../services/migrations/addOdooVersionToApplications";
-import { addSyncPerServerStatus } from "../services/migrations/addSyncPerServerStatus";
-import { addServersTable } from "../services/migrations/addServersTable";
-import { addServerWorkspacesTable } from "../services/migrations/addServerWorkspacesTable";
-import { addNotePriority } from "../services/migrations/addNotePriority";
-import { addProcessesTable } from "../services/migrations/addProcessesTable";
-import { addProcessResultColumn } from "../services/migrations/addProcessResultColumn";
-import { addProcessDebugLogColumn } from "../services/migrations/addProcessDebugLogColumn";
-import { addTagsTable } from "../services/migrations/addTagsTable";
-import { addNtfyTokenColumn } from "../services/migrations/addNtfyTokenColumn";
-import { encryptExistingCredentials } from "../services/migrations/encryptExistingCredentials";
-import { addEditableReposTable } from "../services/migrations/addEditableReposTable";
+import { APP_MIGRATIONS } from "../services/migrations";
 import { RepoExtractorService } from "../services/repoExtractorService";
 import { RepoEditService } from "../services/repoEditService";
 import { CodeStyleService } from "../services/codeStyleService";
@@ -52,11 +33,16 @@ import { ProcessService } from "../services/processService";
 import { DEFAULT_GRAPHIC_PREFS, FONT_SIZE_STEPS, applyGraphicPrefs } from "../models/graphicPrefs";
 import type { FontFamily, ColorTheme } from "../models/graphicPrefs";
 import { SyncService } from "../services/syncService";
+import { ChatLifecycle } from "../services/chat/chatLifecycle";
 import { NotificationService } from "../services/notificationService";
 import { ReminderService } from "../services/reminderService";
 import { BiometryUtils } from "../utils/biometryUtils";
 import { Events } from "../constants/events";
 import { t } from "../i18n";
+import { replanFromCache } from "../services/calendarReminders";
+import { loadSyncConfigs } from "../models/syncConfig";
+import { chatPushNative } from "../plugins/chatPushPlugin";
+import { wirePushOpen } from "../services/chat/chatPushOpen";
 
 const eventBus = new EventBus();
 
@@ -120,108 +106,13 @@ async function startApp() {
 	await db.initialize(setBootStep);
 
 	setBootStep(t("boot.checking_migrations"));
-	await runMigrations(db, [
-		{
-			version: 2026031801,
-			description: "Migration de SecureStorage vers SQLite",
-			run: migrateFromSecureStorage,
-		},
-		{
-			version: 2026032401,
-			description: "Génération des thumbnails vidéo manquants",
-			run: migrateVideoThumbnails,
-		},
-		{
-			version: 2026033001,
-			description: "Ajout des colonnes de synchronisation Odoo",
-			run: addSyncColumns,
-		},
-		{
-			version: 2026033101,
-			description: "Ajout sync_config_id sur les notes",
-			run: addSyncConfigId,
-		},
-		{
-			version: 2026033102,
-			description: "Ajout created_at sur les rappels",
-			run: addReminderCreatedAt,
-		},
-		{
-			version: 2026040801,
-			description: "Ajout des champs de synchronisation sur les applications",
-			run: addApplicationSyncFields,
-		},
-		{
-			version: 2026040802,
-			description: "Création de la table des préférences graphiques utilisateur",
-			run: addUserGraphicPrefs,
-		},
-		{
-			version: 2026040803,
-			description: "Ajout selected_sync_config_ids sur les notes",
-			run: addSelectedSyncConfigIds,
-		},
-		{
-			version: 2026040901,
-			description: "Ajout de la version Odoo détectée sur les applications",
-			run: addOdooVersionToApplications,
-		},
-		{
-			version: 2026041001,
-			description: "Ajout du statut de synchronisation par serveur sur les notes",
-			run: addSyncPerServerStatus,
-		},
-		{
-			version: 2026041101,
-			description: "Création de la table des serveurs SSH",
-			run: addServersTable,
-		},
-		{
-			version: 2026041102,
-			description: "Création de la table des workspaces par serveur",
-			run: addServerWorkspacesTable,
-		},
-		{
-			version: 2026041103,
-			description: "Ajout de la priorité (matrice d'Eisenhower) sur les notes",
-			run: addNotePriority,
-		},
-		{
-			version: 2026041104,
-			description: "Création de la table de l'historique des processus",
-			run: addProcessesTable,
-		},
-		{
-			version: 2026041105,
-			description: "Ajout de la colonne result sur la table des processus",
-			run: addProcessResultColumn,
-		},
-		{
-			version: 2026041106,
-			description: "Ajout de la colonne debug_log sur la table des processus",
-			run: addProcessDebugLogColumn,
-		},
-		{
-			version: 2026041201,
-			description: "Création de la table des tags et migration des tags existants",
-			run: addTagsTable,
-		},
-		{
-			version: 2026041401,
-			description: "Ajout de la colonne ntfy_token pour l'authentification NTFY",
-			run: addNtfyTokenColumn,
-		},
-		{
-			version: 2026041402,
-			description: "Chiffrement AES-256-GCM des credentials existants",
-			run: encryptExistingCredentials,
-		},
-		{
-			version: 2026042601,
-			description: "Table editable_repos pour les repos promus en mode édition",
-			run: addEditableReposTable,
-		},
-	], setBootNote);
+	await runMigrations(db, APP_MIGRATIONS, setBootNote);
+	// The search index is made by several statements, which a stop can split. A migration stopped midway runs again,
+	// except the two versionFirst ones, but a database migrated while every version was written before its run may hold
+	// an index a stop left incomplete: whatever part is missing is made here, before any chat write
+	await db.createChatSearchIndex().catch((e) =>
+		console.warn("[boot] createChatSearchIndex failed:", e)
+	);
 
 	setBootStep(t("boot.loading_graphic_prefs"));
 	{
@@ -245,6 +136,17 @@ async function startApp() {
 	const noteService = new NoteService(eventBus, db);
 	const intentService = new IntentService(eventBus);
 	const syncService = new SyncService(db);
+	syncService.onNotePulled = (noteId) => eventBus.trigger(Events.NOTE_PULLED, { noteId });
+	if (isNative) {
+		await syncService.outbox.recoverInterrupted().catch((e) =>
+			console.warn("[boot] outbox recovery failed:", e));
+		await syncService.chat.recover().catch((e) =>
+			console.warn("[boot] chat outbox recovery failed:", e));
+		// An update or a forced stop cancels the reminders' alarms: schedule them again from the cache
+		void loadSyncConfigs(appService)
+			.then((configs) => replanFromCache(syncService.calendar, configs.map((c) => c.id)))
+			.catch((e) => console.warn("[boot] reminders not replanned:", e));
+	}
 	const reminderService = new ReminderService(db);
 	const notificationService = new NotificationService(syncService, appService, eventBus);
 	const serverService = new ServerService(db);
@@ -343,16 +245,36 @@ async function startApp() {
 		streamDeckEventLog.add(`raw[${ev.len}]: ${ev.bytes}`),
 	).catch(() => {});
 	notificationService.start();
+	syncService.chat.onChange = (configId, channelId) =>
+		eventBus.trigger(Events.CHAT_CHANGED, { configId, channelId });
+	const chatLifecycle = new ChatLifecycle(syncService.chat);
+	chatLifecycle.followApplications(appService);
+	void chatLifecycle.start();
 
 	// Re-schedule any reminders whose notification batch is expiring
 	reminderService.rebatchExpiring().catch((e) =>
 		console.warn("[boot] rebatchExpiring failed:", e)
 	);
 
+	// Messages cached before search_text existed get it in the background: a large cache never holds the boot
+	db.fillChatSearchText().catch((e) =>
+		console.warn("[boot] fillChatSearchText failed:", e)
+	);
+
 	const env = { eventBus, router, appService, tagService, noteService, intentService, databaseService: db, syncService, notificationService, serverService, deploymentService, transcriptionService, translationService, marianService, processService, repoExtractorService, repoEditService, codeStyleService, streamDeckController, streamDeckCameraStreamer, streamDeckLcdTextRenderer };
+
+	if (import.meta.env.MODE === "development") {
+		// ERPLibre's device tests set the app up through it; absent from a production build
+		const { deviceTestHook } = await import("../testing/deviceTestHook");
+		(window as any).__erplibreTest = deviceTestHook(env);
+	}
 
 	setBootStep(t("boot.mounting_interface"));
 	await mount(RootComponent, document.body, { env });
+	// The tap that launched the app, and those that follow, once the routes are mounted
+	wirePushOpen(chatPushNative, (url) => eventBus.trigger(Events.ROUTER_NAVIGATION, { url })).catch((e) =>
+		console.warn("[boot] notification taps not followed:", e)
+	);
 	defineCustomElements(window);
 	hideBootScreen();
 }

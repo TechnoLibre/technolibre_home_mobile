@@ -19,6 +19,7 @@ Application mobile ERPLibre construite avec **Odoo Owl + Capacitor**.
 | [BUNDLE_PIPELINE.md](./BUNDLE_PIPELINE.md) | Bundles tar.gz, extraction paresseuse, mode édition |
 | [SECURITY_PLAN.md](./SECURITY_PLAN.md) | Audit de sécurité et plan de correction |
 | [DEBUG_MENU.md](./DEBUG_MENU.md) | Le menu ⋮ et sa surcouche de débogage |
+| [GOOGLE_PLAY.md](./GOOGLE_PLAY.md) | Google Play : ce qu'une construction Play doit retirer, justification des permissions |
 | [streamdeck_test_matrix.md](./streamdeck_test_matrix.md) | Tests matériels manuels du Stream Deck |
 | [bundle_extract_test_matrix.md](./bundle_extract_test_matrix.md) | Tests manuels d'extraction et d'édition de bundle |
 

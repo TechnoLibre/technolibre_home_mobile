@@ -3,11 +3,17 @@ import { ApplicationsComponent } from "../components/applications/applications_c
 import { OptionsComponent } from "../components/options/options_component";
 import { OptionsDatabaseComponent } from "../components/options/database/options_database_component";
 import { OptionsErplibreComponent } from "../components/options/erplibre/options_erplibre_component";
+import { ChatListComponent } from "../components/chat/chat_list_component";
+import { ChatMailboxComponent } from "../components/chat/chat_mailbox_component";
+import { ChatInfoComponent } from "../components/chat/chat_info_component";
+import { ChatNewComponent } from "../components/chat/chat_new_component";
+import { ChatThreadComponent } from "../components/chat/chat_thread_component";
 import { ApplicationsAddComponent } from "../components/applications/add/applications_add_component";
 import { ApplicationsEditComponent } from "../components/applications/edit/applications_edit_component";
 import { IntentComponent } from "../components/intent/intent_component";
 import { NoteListComponent } from "../components/note_list/note_list_component";
 import { NoteComponent } from "../components/note/note_component";
+import { ActivityCalendarComponent } from "../components/activities/activity_calendar_component";
 import { ServersAddComponent } from "../components/servers/add/servers_add_component";
 import { ServersEditComponent } from "../components/servers/edit/servers_edit_component";
 import { ServersDeployComponent } from "../components/servers/deploy/servers_deploy_component";
@@ -37,6 +43,12 @@ export const routes: Route[] = [
 	{ pathname: "/applications/add", component: ApplicationsAddComponent },
 	{ pathname: "/applications/gallery", component: ApplicationsGalleryComponent },
 	{ pathname: "/applications", component: ApplicationsComponent },
+	{ pathname: "/chat/new", component: ChatNewComponent },
+	{ pathname: "/chat/inbox", component: ChatMailboxComponent },
+	{ pathname: "/chat/starred", component: ChatMailboxComponent },
+	{ pathname: "/chat/:source/:channelId/info", component: ChatInfoComponent },
+	{ pathname: "/chat/:source/:channelId", component: ChatThreadComponent },
+	{ pathname: "/chat", component: ChatListComponent },
 	{ pathname: "/servers/edit", component: ServersEditComponent },
 	{ pathname: "/servers/add", component: ServersAddComponent },
 	{ pathname: "/servers/settings/:host/:username", component: ServersSettingsComponent },
@@ -44,6 +56,7 @@ export const routes: Route[] = [
 	{ pathname: "/servers/deploy/:host/:username", component: ServersDeployComponent },
 	{ pathname: "/servers/resources/:host/:username", component: ServersResourcesComponent },
 	{ pathname: "/tags/:id", component: TagNotesComponent },
+	{ pathname: "/activities", component: ActivityCalendarComponent },
 	{ pathname: "/notes", component: NoteListComponent },
 	{ pathname: "/notes/edit/:id", component: NoteListComponent },
 	{ pathname: "/note/:id", component: NoteComponent },

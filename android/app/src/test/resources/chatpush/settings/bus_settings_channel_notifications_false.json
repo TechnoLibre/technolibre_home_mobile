@@ -1,0 +1,10 @@
+{
+  "id": 16,
+  "message": {
+    "type": "res.users.settings",
+    "payload": {
+      "id": 1,
+      "channel_notifications": false
+    }
+  }
+}

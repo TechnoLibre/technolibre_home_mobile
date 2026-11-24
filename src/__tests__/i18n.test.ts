@@ -297,3 +297,58 @@ describe("i18n — Sleep section, deck kept lit", () => {
     expect(dict["sleep.deck_awake_hint"]).toContain(dict["streamdeck.power_keep_awake"]);
   });
 });
+
+// ─── Chat wording ─────────────────────────────────────────────────────────────
+
+describe("chat wording", () => {
+  it("the « Wi-Fi only » hint says it also holds the chat's files, both ways", () => {
+    expect(en["sync.attachments_hint"]).toMatch(/chat/i);
+    expect(en["sync.attachments_hint"]).toMatch(/voice messages/);
+    expect(en["sync.attachments_hint"]).toMatch(/previews/);
+    expect(fr["sync.attachments_hint"]).toMatch(/clavardage/);
+    expect(fr["sync.attachments_hint"]).toMatch(/messages vocaux/);
+    expect(fr["sync.attachments_hint"]).toMatch(/aperçus/);
+  });
+
+  it("French chat strings say « vous », and touch rather than « touche »", () => {
+    const chat = Object.entries(fr).filter(([k]) => k.startsWith("chat."));
+    expect(chat.filter(([, v]) => /(^|[\s'(«])(Touche|touche|tu|ton|ta|tes)(?=[\s,.;:!?)»]|$)/.test(v))).toEqual([]);
+    expect(fr["chat.list_cache_warning"]).toMatch(/Touchez pour les gérer\./);
+  });
+
+  it("freeing a conversation's space names the downloaded files, not the conversation", () => {
+    expect(en["chat.info_clear_space"]).toBe("Remove downloaded files");
+    expect(fr["chat.info_clear_space"]).toBe("Retirer les fichiers téléchargés");
+    expect(en["chat.cache_clear_all"]).toBe("Remove all downloaded files");
+    expect(fr["chat.cache_clear_all"]).toBe("Retirer tous les fichiers téléchargés");
+  });
+
+  it("French says « compresser » for every photo compression, and the time left after the time", () => {
+    const chat = Object.entries(fr).filter(([k]) => k.startsWith("chat."));
+    expect(chat.filter(([, v]) => /rédui/i.test(v))).toEqual([]);
+    expect(fr["chat.compress_yes"]).toBe("Compresser");
+    expect(fr["chat.compress_ask"]).toMatch(/^Compresser les photos/);
+    expect(fr["chat.voice_left"]).toBe("{time} restantes");
+    expect(fr["chat.att_progress"]).toBe("{percent}\u00a0%");
+  });
+
+  it("chat notices agree with any action label: no participle after « {action} : »", () => {
+    for (const key of ["chat.notice_refused", "chat.notice_vanished", "chat.notice_message_vanished"]) {
+      expect(fr[key], key).toMatch(/^\{action\} : /);
+      expect(fr[key], key).not.toMatch(/^\{action\} : (non )?(envoyé|refusé)/);
+    }
+  });
+
+  it("French chat errors ask with « Réessayez. », as everywhere else", () => {
+    const chat = Object.entries(fr).filter(([k]) => k.startsWith("chat."));
+    expect(chat.filter(([, v]) => /Réessayer\./.test(v))).toEqual([]);
+    expect(fr["chat.action_error"]).toBe("Impossible de le faire. Réessayez.");
+  });
+
+  it("English emoji and edit labels read naturally, as their French", () => {
+    expect(en["chat.emoji_search"]).toBe("Search emoji");
+    expect(en["chat.emoji_close"]).toBe("Close the emoji picker");
+    expect(en["chat.draft_editing"]).toBe("Editing");
+    expect(fr["chat.draft_editing"]).toBe("Modification en cours");
+  });
+});

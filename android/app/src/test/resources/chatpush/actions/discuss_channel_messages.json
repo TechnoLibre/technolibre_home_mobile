@@ -1,0 +1,102 @@
+{
+ "data": {
+  "mail.message": [
+   {
+    "attachment_ids": [],
+    "author": {
+     "id": 3,
+     "type": "partner"
+    },
+    "body": "<p>Deuxième message de la capture</p>",
+    "create_date": "2026-10-29 07:29:43",
+    "date": "2026-10-29 07:29:43",
+    "default_subject": "ms-2767424-mvt80k29-12-actions",
+    "email_from": "\"Administrator\" <admin@example.com>",
+    "id": 48,
+    "is_discussion": true,
+    "is_note": false,
+    "linkPreviews": [],
+    "message_type": "comment",
+    "model": "discuss.channel",
+    "needaction": false,
+    "notifications": [],
+    "parentMessage": false,
+    "pinned_at": false,
+    "rating_id": false,
+    "reactions": [],
+    "recipients": [],
+    "record_name": "ms-2767424-mvt80k29-12-actions",
+    "res_id": 17,
+    "scheduledDatetime": false,
+    "starred": false,
+    "subject": false,
+    "subtype_description": false,
+    "thread": {
+     "id": 17,
+     "model": "discuss.channel"
+    },
+    "trackingValues": [],
+    "write_date": "2026-10-29 07:29:43"
+   },
+   {
+    "attachment_ids": [],
+    "author": {
+     "id": 3,
+     "type": "partner"
+    },
+    "body": "<p>ms-2767424-mvt80kfv-13-envoyée par le natif<!-- erplibre-mobile:9300bdab-e8c8-46db-ba04-62fc89095388 --></p>",
+    "create_date": "2026-10-29 07:27:25",
+    "date": "2026-10-29 07:27:25",
+    "default_subject": "ms-2767424-mvt80k29-12-actions",
+    "email_from": "\"Administrator\" <admin@example.com>",
+    "id": 46,
+    "is_discussion": true,
+    "is_note": false,
+    "linkPreviews": [],
+    "message_type": "comment",
+    "model": "discuss.channel",
+    "needaction": false,
+    "notifications": [],
+    "parentMessage": false,
+    "pinned_at": false,
+    "rating_id": false,
+    "reactions": [],
+    "recipients": [],
+    "record_name": "ms-2767424-mvt80k29-12-actions",
+    "res_id": 17,
+    "scheduledDatetime": false,
+    "starred": false,
+    "subject": false,
+    "subtype_description": false,
+    "thread": {
+     "id": 17,
+     "model": "discuss.channel"
+    },
+    "trackingValues": [],
+    "write_date": "2026-10-29 07:27:25"
+   }
+  ],
+  "mail.thread": [
+   {
+    "id": 17,
+    "model": "discuss.channel",
+    "module_icon": "/mail/static/description/icon.png"
+   }
+  ],
+  "res.partner": [
+   {
+    "avatar_128_access_token": "jeton",
+    "id": 3,
+    "isInternalUser": true,
+    "is_company": false,
+    "name": "Administrator",
+    "userId": 2,
+    "write_date": "2026-10-29 07:26:50"
+   }
+  ]
+ },
+ "messages": [
+  48,
+  46
+ ]
+}

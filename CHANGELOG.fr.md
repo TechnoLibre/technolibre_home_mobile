@@ -8,6 +8,146 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Non publié]
 
 ### Ajouté
+- **Clavardage avec Discuss d'Odoo 18, lot 1** — une tuile Clavardage sur la
+  page d'accueil, avec son nombre de non lus, ouvre la liste des
+  conversations de chaque serveur Odoo 18 de l'app (filtre par serveur,
+  recherche, discussions directes, groupes et canaux). Une conversation
+  montre son historique par pages (ou en entier d'un coup), qui écrit, qui
+  est en ligne, et ce qu'est devenu chaque message : envoi, envoyé, vu par
+  tous, non envoyé. Les messages arrivent aussitôt par le websocket du
+  serveur, qui se reconnecte seul et recharge ce qu'il ne peut pas rejouer.
+  Un message écrit hors ligne attend dans une file, dans l'ordre, et un envoi
+  dont la réponse s'est perdue est retrouvé par un marqueur caché dans son
+  corps au lieu d'être posté deux fois ; avec le module serveur facultatif
+  `erplibre_mobile_chat`, installé depuis « Modifier une application » par
+  un utilisateur système, le serveur le reconnaît aussi. Options ›
+  Clavardage coupe les accusés de lecture et l'indicateur de frappe envoyés
+  au serveur.
+- **Clavardage, lot 2 : nouvelles conversations et gestion** — un écran
+  Nouvelle conversation démarre un message direct (personnes trouvées par
+  nom, les récentes d'abord), un groupe, ou un canal réservé à un groupe
+  d'accès ou ouvert à tous, et liste les canaux publics à rejoindre. Tout se
+  fait hors ligne : la conversation apparaît aussitôt, attend dans la file et
+  prend son identité serveur au retour du réseau ; une création dont la
+  réponse s'est perdue est retrouvée au lieu d'être faite deux fois (par un
+  identifiant que stocke le module serveur ou, sans lui, par l'empreinte de
+  la conversation), et un refus laisse la conversation marquée échouée
+  jusqu'à ce qu'on l'écarte. La fiche liste les membres par pages, ajoute des
+  personnes, renomme un groupe ou un canal (ou un chat, pour soi seul),
+  modifie la description, met la conversation en sourdine de 15 minutes à un jour
+  ou pour de bon, la quitte et, pour un administrateur, retire un membre. Un
+  message direct masqué sur le serveur le reste et réapparaît quand l'autre
+  personne écrit. Options › Clavardage met en sourdine tout le compte, par
+  serveur. Le module serveur 1.1 est détecté : un module plus ancien se voit
+  proposer sa mise à jour (à un utilisateur système), et le retrait en a
+  besoin. Les écrans de fil et de fiche chargent désormais leurs styles, et
+  une garde vérifie que chaque feuille atteinte depuis l'entrée est couverte.
+- **Clavardage, lot 3 : fichiers et voix** — un message porte des photos,
+  des fichiers et des messages vocaux. La zone de saisie prend une photo de
+  l'appareil (l'original, conservé), un choix dans la galerie ou n'importe
+  quel fichier ; une photo HEIC devient un JPEG, et une photo peut être
+  compressée (1920 px, JPEG à 80) quand l'utilisateur le demande. Un message
+  vocal s'enregistre d'un appui pour commencer et d'un appui pour finir (60
+  secondes au plus) et s'encode en MP3, mono, 128 kbit/s. Le texte et les
+  fichiers d'une conversation sont gardés en brouillon par conversation, d'un
+  redémarrage à l'autre, et la liste en montre une ligne « Brouillon : ». Un
+  message avec fichiers s'affiche aussitôt, avec une ligne « Préparation des
+  photos… » pendant leur compression. Les fichiers partent un à un vers le serveur, en
+  flux, dans une voie de la file qui leur est propre ; un transfert dont la
+  réponse s'est perdue n'est pas fait deux fois (avec le module serveur 1.2,
+  qui reconnaît le téléversement par son identifiant, ou, sans lui, par une
+  recherche avant le renvoi), un fichier au-delà de la limite du serveur est
+  refusé avec un avis, et les fichiers attendent le Wi-Fi quand l'option le
+  demande. Le fil montre des aperçus, la visionneuse ouvre une photo, le
+  lecteur joue un message vocal, et « ouvrir avec » confie un fichier à une
+  autre app. Options › Clavardage règle la question de compression, l'espace
+  du cache, un nettoyage des fichiers ouverts le moins récemment (désactivé
+  par défaut, 2048 Mo, avertissement à 80 %) et vide le cache ; l'écran
+  d'information d'une conversation montre son propre espace et le libère.
+  Supprimer une application compte les messages et les fichiers pas encore
+  envoyés. L'app embarque
+  l'encodeur MP3 @breezystack/lamejs, sous licence LGPL-3.0 : Options ›
+  Licences tierces le nomme, lie son code source et reproduit le texte de la
+  licence.
+- **Clavardage, lot 4 : actions et écriture** — un appui long sur un message
+  ouvre un menu : une barre de six réactions (👍 ❤️ 😂 😮 😢 🙏 au début, puis
+  celles dont l'utilisateur se sert le plus), un bouton vers le sélecteur
+  d'émojis complet, Répondre, Copier (le message entier) et, sur ses propres
+  messages, Modifier et Supprimer. Les réactions s'affichent en pastilles
+  sous le message ; un appui ajoute ou retire la sienne, un appui long
+  indique qui a réagi. Tout se met en file hors ligne et n'est jamais appliqué
+  deux fois : une réaction part en ajout ou en retrait explicite, celle
+  ajoutée puis retirée avant de partir n'envoie rien, et une modification ou
+  une suppression dont la réponse s'est perdue compte comme faite quand le
+  serveur la montre. Une réponse montre une citation de l'original, vers
+  laquelle un appui défile ; un message modifié montre « (modifié) » ; un
+  message supprimé disparaît, et une réponse qui le cite dit que l'original
+  est supprimé. Une modification est refusée plutôt que d'écraser un message
+  changé ou supprimé entre-temps dans le navigateur (avec le module serveur
+  1.3, le serveur compare le corps qu'il détient ; sans lui, l'app relit le
+  message juste avant l'envoi), et le texte refusé reste à un appui sous
+  « Reprendre ». La zone de saisie écrit ce qu'écrit celle du navigateur :
+  sauts de ligne, liens, codes courts d'émojis, et @personnes et #canaux
+  choisis dans des suggestions (ceux que le téléphone connaît, puis ceux du
+  serveur), avec @everyone ; une réponse, une modification en cours et les
+  choix sont gardés dans le brouillon de la conversation. Le sélecteur
+  d'émojis offre recherche, catégories et récents ; ses noms, mots-clés et
+  codes courts viennent du module `web` d'Odoo 18 (LGPL-3.0), convertis une
+  fois en une ressource chargée à l'ouverture du sélecteur, et ce sont des
+  données Unicode CLDR sous la licence Unicode-DFS-2016 : Options › Licences
+  tierces nomme les deux et reproduit le texte d'Unicode, la phrase des
+  auteurs dans la langue de l'app. Migrations 2026102607 (réactions,
+  réponses, destinataires) et 2026102608 (réponse, modification et mentions
+  du brouillon). Le kit de test est à `HARNESS_API` 4 et le crochet appareil
+  à `DEVICE_HOOK_API` 5.
+- **Clavardage, lot 5 : retrouver et boîte de réception** — les conversations
+  gardées en tête restent en haut de la liste ; Options › Clavardage › « Ordre
+  de la liste » choisit « Épinglées d'abord » (par défaut) ou « Non lues
+  d'abord ». Le champ de recherche de la liste fouille désormais messages,
+  personnes, conversations, noms de fichiers, boîte de réception et favoris sur
+  le téléphone, même hors ligne (un index sur le téléphone là où sa base le
+  permet, un simple balayage sinon), puis demande au serveur davantage en ligne,
+  dans les seules conversations de l'utilisateur, sans rien marquer lu ; un
+  résultat ouvre sa conversation au message. Un message s'épingle ou se
+  désépingle depuis son menu, et « Messages épinglés » dans le menu de la
+  conversation les liste ; une notice d'épingle renvoie au message. Un message
+  se met en favori (Favori), et la liste a une boîte Favoris. La nouvelle boîte
+  de réception apporte les mentions, les commentaires des enregistrements suivis
+  et les assignations, avec son historique ; « Marquer comme lu » lit un
+  élément, « Tout marquer lu » ceux affichés, et un élément ouvre sa
+  conversation au message, la note de l'enregistrement dans l'app, ou la page de
+  l'enregistrement. Une réponse dans le fil d'un enregistrement accepte texte,
+  photos, fichiers, voix et mentions, est une note interne sauf si l'on
+  confirme « Envoyer comme message aux abonnés », et attend hors ligne comme
+  tout message. Un utilisateur dont Odoo notifie par courriel, et dont la boîte
+  est donc vide, apprend pourquoi et peut passer à « Recevoir mes notifications
+  dans Odoo » d'un appui (en ligne). Le module serveur 1.4 évite tout doublon ;
+  sans lui, l'app cherche avant d'envoyer. Migrations 2026102701 à 2026102704 ;
+  le banc de test est à `HARNESS_API` 5 et le crochet d'appareil à
+  `DEVICE_HOOK_API` 6.
+- **Clavardage : auteurs sur les bulles** — dans les groupes et les canaux, les
+  messages des autres montrent le nom de l'auteur au-dessus de la bulle et son
+  avatar à gauche, une fois par suite de messages comme le client web d'Odoo ;
+  les siens, les conversations directes et les lignes système n'en montrent
+  pas. Les avatars sont chargés quand l'auteur est à l'écran, gardés sur le
+  téléphone par compte (comptés et vidés avec le cache du clavardage), et des
+  initiales les remplacent le temps du chargement ou hors ligne. Migration
+  2026102705.
+- **Points d'entrée des tests de synchro** — `src/testing/syncTestKit.ts`
+  (versionné par `HARNESS_API`) prépare le code de synchro pour les tests
+  d'intégration d'ERPLibre contre de vrais Odoo ; une construction de
+  développement expose aussi `window.__erplibreTest` à ses tests appareil, et
+  `-PsyncTest` construit l'app sous `ca.erplibre.home.synctest`, à côté de
+  celle de l'utilisateur.
+- **Porte de test des notifications du clavardage** — seule la construction
+  `-PsyncTest` porte `ChatTestDoor` (`android/app/src/synctest/`), un
+  récepteur que seuls le shell adb, ou une app à qui `adb pm grant` a accordé
+  DUMP, atteignent (`android.permission.DUMP`) : il
+  envoie la vraie PendingIntent d'action ou de contenu de la notification de
+  l'app de test, retrouvée par son étiquette ; les scénarios d'appareil
+  d'ERPLibre agissent ainsi sur une notification sans toucher au volet. Les
+  constructions normale et `-PnoChatRealtime` n'en portent ni la classe ni
+  l'entrée de manifeste.
 - **Bundle de test** — une troisième cible dans Options › Code, après Mobile
   et ERPLibre. 52 fixtures d'affichage sous 400 Ko : PNG en couleur, avec
   alpha et en niveaux de gris, plus le cas dégénéré 1×1, BMP, GIF fixe et
@@ -59,8 +199,85 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Reste le couplage acoustique — jouer sur le haut-parleur pendant que le
   micro capte — dont l'annulation d'écho du processeur de signal retire ce
   que l'appareil vient de jouer, d'où une qualité mauvaise par construction
+- **Notifications du clavardage app fermée** — Options › Notifications du
+  clavardage associe, par serveur Odoo 18, un lien vers le ntfy de
+  l'utilisateur (code QR ou collé, avec une seconde adresse quand Odoo atteint
+  ntfy autrement). Odoo publie un push chiffré sur le sujet secret du compte, le
+  téléphone le déchiffre et affiche une notification par conversation ; la toucher
+  ouvre la conversation. Cinq niveaux : temps réel, temps réel sur Wi-Fi ou en
+  charge, aux 15 minutes (le défaut d'une installation qui n'a jamais choisi),
+  chaque heure, désactivé ; les deux premiers gardent une connexion permanente
+  derrière une notification minimale partagée avec la passerelle SMS (son canal
+  « Passerelle SMS » est remplacé) et demandent à Android l'exemption de
+  batterie. Un téléphone muet plus longtemps que le cache de ntfy, et un compte
+  sans ntfy, reçoivent un sommaire par serveur compté sur les compteurs de non
+  lus d'Odoo ; rien n'est marqué lu. Le choix de l'écran verrouillé est par
+  serveur et « Masqué quand verrouillé » est garanti : quand Android masque le
+  contenu sensible la notification montre « Nouveau message — <serveur> », et
+  quand Android montre tout ou que le réglage est illisible la notification
+  reste hors de l'écran verrouillé. `-PnoChatRealtime` construit sans le service
+  permanent. Fonctionne avec `erplibre_mobile_chat` 1.4 ou sans le module ; la
+  migration 2026102801 ajoute la table `chat_push`
+- **Actions des notifications de clavardage** — une notification de
+  clavardage offre « Répondre » et « Marquer lu », et un troisième bouton
+  (Android en dessine trois au plus) : « 👍 » quand le plus récent message a un
+  identifiant (`erplibre_mobile_chat` 1.5), sinon « Muet 1 h ». Les boutons
+  s'affichent dans tous les modes d'écran verrouillé, « Jamais affiché »
+  compris (le texte reste masqué). « Marquer lu » marque la conversation lue
+  dans Odoo même quand l'envoi de « lu » est désactivé, et retire de la boîte
+  de réception d'Odoo les @mentions de cette conversation jusqu'à ce message.
+  Chaque action est scellée dans un magasin local avant tout appel réseau et
+  envoyée une fois : par l'identifiant client du module ou, sans lui, par la
+  recherche du marqueur caché après une fenêtre de calme de 3 minutes ; un
+  échec réseau est réessayé avec un délai croissant et l'action passe à l'app
+  après 24 heures, un refus, deux marqueurs trouvés ou une session morte. Une
+  session morte est détectée avant chaque action (Odoo répond « marquer lu »
+  par un succès sans rien faire) ; le téléphone affiche alors une notification
+  par serveur, « Ouvrez l'app pour terminer une action — {serveur} », car
+  Android interdit d'ouvrir l'app depuis une action en arrière-plan, et l'app
+  envoie l'action une fois à son prochain démarrage. Une action qui ne peut
+  être enregistrée affiche « Action non envoyée — {serveur} ». Le module 1.5
+  marque les appareils de l'app (leurs push portent l'identifiant du message et
+  le type de canal, partent après la validation et ne journalisent rien) et
+  ajoute les push « lu » et « boîte de réception faite » qui retirent aussitôt
+  une notification lue ou traitée ailleurs.
+- **Préférences des notifications du clavardage** — les réglages de
+  notification d'Odoo se changent depuis l'app : « Canaux (réglage d'Odoo) »
+  par serveur dans Options › Clavardage (écrit false pour « mentions », canaux
+  seulement, comme Odoo l'applique) et « Ce canal (réglage d'Odoo) » dans
+  l'écran d'information d'un canal, envoyés par la file et suivis depuis le
+  navigateur par le bus. Par serveur, un filtre du téléphone (« Tout ce qu'Odoo
+  envoie », « Mentions et messages directs », « Rien de ce serveur »),
+  l'interrupteur de la boîte de réception, qui fait aussi taire les mentions
+  d'enregistrement sauf si « Sonner quand même si on me mentionne dans un
+  enregistrement » est cochée, et des heures calmes qui affichent sans son,
+  ne retirent rien et peuvent passer minuit. Pour tout le téléphone, le choix
+  du navigateur actif (« Sonner tout de suite », « Attendre 10 s » par défaut,
+  « Ne pas envoyer au téléphone » ; un message retenu survit au processus et
+  est retiré quand il est lu dans le navigateur) et « Économiser
+  automatiquement » : un ou deux niveaux de plus sous des seuils (30 % et 15 %
+  par défaut), jamais au-delà du niveau 4, le niveau 3 au moins sous
+  l'économiseur, retour au niveau choisi une fois branché, une montée relâchée
+  seulement 5 points au-dessus de son seuil (une jauge qui oscille ne fait
+  monter qu'une fois, et la dernière montée survit au processus), avec « En ce
+  moment : niveau {level} ({why}) » dans les options. Les niveaux 1 et 2
+  demandent la dispense de batterie par la boîte de dialogue d'Android, et les
+  options disent quand Android la refuse. Le panneau d'état compte « Messages
+  retenus perdus : {n} ». `erplibre_mobile_chat` 1.6 ajoute les drapeaux de
+  mention et de navigateur, et une installation ou une mise à niveau depuis
+  l'app le dit aussitôt au serveur ; sans lui, le filtre laisse passer les
+  messages de canal et « Attendre 10 s » sonne tout de suite, et avec la 1.5
+  « Ne pas envoyer au téléphone » ne joue que dans la minute environ qui suit
+  l'ouverture du navigateur. La migration 2026103001 ajoute les colonnes de
+  préférences de `chat_push` et `chat_sources` ; `doc/GOOGLE_PLAY.md` consigne
+  les justifications et les écarts pour Play
 
 ### Modifié
+- **La lecture faite dans l'app borne le nettoyage de la boîte de réception**
+  — marquer une conversation lue retirait de la boîte de réception d'Odoo
+  toutes les @mentions de cette conversation, y compris une arrivée après le
+  message lu ; elle ne retire plus que celles jusqu'au message lu, comme
+  « Marquer lu » dans une notification
 - **Les catalogues gettext quittent le bundle** — 41 763 fichiers et 857 Mo,
   33,5 % des fichiers et 58,7 % de la charge, contre 603 Mo pour tout le
   reste. Weblate et les robots OCA les maintiennent, et personne n'en lit un
@@ -71,6 +288,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ramènent la compilation de 43 s à 22 s
 
 ### Corrigé
+- **La boîte de réception reçoit le commentaire qu'un chargement a devancé** —
+  quand un chargement de la boîte survenait entre l'annonce d'un commentaire
+  d'un enregistrement suivi et sa livraison, la livraison était prise pour un
+  rejeu et n'écrivait rien : de deux commentaires, seul le second apparaissait.
+  Une telle livraison relit désormais la première page de la boîte.
 - **L'interface revient après chaque redémarrage** — un lancement sur deux
   laissait l'application sur son écran de démarrage : le JavaScript allait au
   bout, le fil principal restait inactif dans sa boucle, et rien n'était jamais

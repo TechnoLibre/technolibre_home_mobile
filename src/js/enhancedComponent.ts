@@ -6,6 +6,7 @@ import { NoteService } from "../services/note/noteService";
 import { IntentService } from "../services/intentService";
 import { DatabaseService } from "../services/databaseService";
 import { SyncService } from "../services/syncService";
+import type { ChatService } from "../services/chat/chatService";
 import { NotificationService } from "../services/notificationService";
 import { ServerService } from "../services/serverService";
 import { DeploymentService } from "../services/deploymentService";
@@ -45,6 +46,10 @@ export abstract class EnhancedComponent extends Component {
 
 	public get syncService(): SyncService {
 		return this.env.syncService;
+	}
+
+	public get chatService(): ChatService {
+		return this.env.syncService.chat;
 	}
 
 	public get notificationService(): NotificationService {

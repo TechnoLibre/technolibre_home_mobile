@@ -12,8 +12,175 @@ import { Workspace } from "../models/workspace";
 import type { ProcessRecord, ProcessType, ProcessStatus } from "../models/process";
 import { StorageConstants } from "../constants/storage";
 import { encryptCredential, decryptCredential } from "../utils/cryptoUtils";
+import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
+import { searchTextOf } from "./chat/chatBody";
 
 export type SyncStatus = "local" | "pending" | "synced" | "conflict" | "error";
+
+/** Status of a note on ONE server, stored in notes.sync_per_server_status. */
+/**
+ * A note's state on one server: synced; pending (something to send);
+ * error (the last push failed); conflict (a record of it changed in the
+ * app and on the server, the user must choose; nothing is sent meanwhile).
+ */
+export type PerServerSyncStatus = "synced" | "error" | "pending" | "conflict";
+
+/**
+ * How a note is bound to a remote record. "create": the note created the
+ * record and is mirrored by it (push writes, pull reads back). "activity":
+ * a mail.activity the note scheduled on another record; "message": a
+ * mail.message the note posted in another record's chatter. A note can
+ * have several of these two on one server, each with its own link.
+ */
+export type NoteLinkKind = "create" | "activity" | "message";
+
+/**
+ * One remote record a note is bound to. A remote id is only meaningful in
+ * the database it came from, so a link is scoped to a sync config id
+ * ("url|username|database", see syncConfigIdFor).
+ */
+export interface NoteLink {
+  id: string;
+  noteId: string;
+  configId: string;
+  model: string;
+  resId: number;
+  kind: NoteLinkKind;
+  /**
+   * ok: the record exists; deleted: deleted on the server, the user not
+   * asked yet or declined; dismissed: deleted, and the user stopped sending
+   * the note there as that kind (kept as history, never pushed); done: an
+   * activity the app marked done (the server removed or archived it).
+   * Only ok links are written; the others stay as a trace.
+   */
+  remoteState: NoteLinkRemoteState;
+  createdAt: string;
+  lastSyncedAt: string | null;
+  /**
+   * Key written in the remote record as "erplibre-mobile:<uuid>" when the
+   * app created it; null for records linked before the key existed.
+   */
+  clientUuid?: string | null;
+  /**
+   * What the link stands for beyond its record, stored as JSON: for an
+   * activity, the record it is scheduled on and its type, deadline and
+   * user (see ActivityTarget); for a message, its record and the hash of
+   * the body last sent (bodyHash). Empty for a "create" link.
+   */
+  params?: Record<string, any>;
+}
+
+/**
+ * One activity of a server shown by the activity calendar, as last read
+ * (see ActivityCalendarService): the record it is on, its type, summary,
+ * deadline ("YYYY-MM-DD") and user; done (archived on Odoo 17+, with
+ * dateDone) or open. pending: a change made in the app (done, new
+ * deadline) still waiting in the outbox for the server.
+ */
+export interface CalendarActivity {
+  configId: string;
+  resId: number;
+  resModel: string;
+  recordId: number;
+  recordName: string;
+  typeId: number | null;
+  typeName: string | null;
+  summary: string;
+  deadline: string;
+  userId: number | null;
+  userName: string | null;
+  done: boolean;
+  dateDone: string | null;
+  pending: boolean;
+  /** Why the server refused the last change made in the app, undone since. */
+  lastError?: string | null;
+  fetchedAt: string;
+}
+
+export type NoteLinkRemoteState = "ok" | "deleted" | "dismissed" | "done";
+
+const NOTE_LINK_REMOTE_STATES: NoteLinkRemoteState[] = ["ok", "deleted", "dismissed", "done"];
+
+/**
+ * State of an outbox operation:
+ * - queued: waits for its first run;
+ * - running: a run is in progress, or was cut short (app killed), in
+ *   which case the server may have applied it: attempts > 0 tells the
+ *   handler to look for its client_uuid before acting again;
+ * - failed: the last run failed, retried once next_attempt_at is past;
+ * - blocked: the server refused it for a reason a retry does not fix
+ *   (model gone, access, ambiguous match), waits for the user;
+ * - incomplete: saved before every choice was made (record not picked
+ *   offline), waits for the user.
+ */
+export type OutboxStatus = "queued" | "running" | "failed" | "blocked" | "incomplete";
+
+/**
+ * One operation of a note waiting to reach one server: a creation, or a
+ * one-shot action. client_uuid is generated once and kept across retries;
+ * the remote record carries it, so a run whose answer was lost can find
+ * what it already did.
+ */
+export interface OutboxOp {
+  id: string;
+  clientUuid: string;
+  noteId: string;
+  configId: string;
+  kind: string;
+  params: Record<string, any>;
+  status: OutboxStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  /** Id of an operation that must be gone (done) before this one runs. */
+  dependsOn: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What one server allows on one model, as probed by CapabilityService.
+ * Access flags are null when the server answered none of the probes.
+ */
+export interface ServerCapability {
+  configId: string;
+  model: string;
+  exists: boolean;
+  canRead: boolean | null;
+  canCreate: boolean | null;
+  canWrite: boolean | null;
+  hasActivities: boolean;
+  hasChatter: boolean;
+  fields: Record<string, any>;
+  odooVersion: number;
+  probedAt: string;
+  error: string | null;
+}
+
+/**
+ * A record of a server kept for offline choices (projects, later the
+ * records an activity or a message is attached to): its id and name as
+ * the server last returned them.
+ */
+export interface RemoteRecord {
+  configId: string;
+  model: string;
+  resId: number;
+  displayName: string;
+  extra: Record<string, any>;
+  fetchedAt: string;
+}
+
+/**
+ * The last choice made for one kind of target on one server (the project
+ * of a new task, …), offered first the next time.
+ */
+export interface SyncTargetPref {
+  configId: string;
+  kind: string;
+  params: Record<string, any>;
+  updatedAt: string;
+}
 
 export interface NoteSyncInfo {
   odooId: number | null;
@@ -26,9 +193,53 @@ export interface NoteSyncInfo {
 
 const DB_NAME = "erplibre_mobile";
 
+/** Rows of chat_messages read per query when fillChatSearchText fills search_text. */
+const SEARCH_FILL_ROUND = 500;
+
+/**
+ * The push preference columns of chat_push and their definitions: the
+ * phone filter, the inbox switches, the quiet hours (minutes from local
+ * midnight, 22:00 to 07:00 by default).
+ */
+const CHAT_PUSH_PREFS = [
+  ["phone_filter", "TEXT NOT NULL DEFAULT 'all'"],
+  ["inbox_notify", "INTEGER NOT NULL DEFAULT 1"],
+  ["inbox_mentions", "INTEGER NOT NULL DEFAULT 0"],
+  ["quiet_on", "INTEGER NOT NULL DEFAULT 0"],
+  ["quiet_from", "INTEGER NOT NULL DEFAULT 1320"],
+  ["quiet_to", "INTEGER NOT NULL DEFAULT 420"],
+] as const;
+
+/**
+ * The triggers that keep chat_search_fts in step with chat_messages, by
+ * name. An INSERT OR REPLACE over an existing id deletes the old row
+ * without firing delete triggers (recursive_triggers is off), so the
+ * before-insert trigger removes the old row's entry first: without it the
+ * index keeps text it no longer matches and reads as corrupt.
+ */
+const SEARCH_INDEX_TRIGGERS: Record<string, string> = {
+  chat_search_fts_bi:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_bi BEFORE INSERT ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) SELECT 'delete', rowid, search_text FROM chat_messages WHERE id = new.id; END",
+  chat_search_fts_ai:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_ai AFTER INSERT ON chat_messages BEGIN INSERT INTO chat_search_fts(rowid, search_text) VALUES (new.rowid, new.search_text); END",
+  chat_search_fts_ad:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_ad AFTER DELETE ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text); END",
+  chat_search_fts_au:
+    "CREATE TRIGGER IF NOT EXISTS chat_search_fts_au AFTER UPDATE OF search_text ON chat_messages BEGIN INSERT INTO chat_search_fts(chat_search_fts, rowid, search_text) VALUES ('delete', old.rowid, old.search_text); INSERT INTO chat_search_fts(rowid, search_text) VALUES (new.rowid, new.search_text); END",
+};
+
+/** The schema objects of the search index: the virtual table and its triggers. */
+const SEARCH_INDEX_PARTS = ["chat_search_fts", ...Object.keys(SEARCH_INDEX_TRIGGERS)];
+
 export class DatabaseService {
   private sqlite: SQLiteConnection;
   private db: any;
+  /**
+   * Tail of the read-modify-write chain on each note's
+   * sync_per_server_status JSON. Writers queue here, so two writers
+   * interleaving across awaits never drop each other's entry.
+   */
+  private _perServerChain = new Map<string, Promise<unknown>>();
 
   constructor() {
     this.sqlite = new SQLiteConnection(CapacitorSQLite);
@@ -341,6 +552,11 @@ export class DatabaseService {
     await this.db.run(sql, values);
   }
 
+  /** Several writes in one call and one transaction: all applied, or none. */
+  async rawRunSet(set: { statement: string; values: any[] }[]): Promise<void> {
+    if (set.length > 0) await this.db.executeSet(set, true);
+  }
+
   async addNtfyTokenColumn(): Promise<void> {
     const existing = await this.db.query("PRAGMA table_info(applications)");
     const existingNames = (existing.values ?? []).map((r: any) => r.name as string);
@@ -458,7 +674,14 @@ export class DatabaseService {
   }
 
   async deleteNote(id: string): Promise<void> {
-    await this.db.run("DELETE FROM notes WHERE id = ?", [id]);
+    // Under the note's sync lock: a push settling meanwhile then finds no
+    // note and writes no link. Its queued operations go with it; the remote
+    // records are left untouched.
+    await this.withPerServerLock(id, async () => {
+      await this.db.run("DELETE FROM notes WHERE id = ?", [id]);
+      await this.deleteNoteLinks(id);
+      await this.deleteOutboxOpsForNote(id);
+    });
   }
 
   async updateNote(id: string, note: Note): Promise<void> {
@@ -661,45 +884,1642 @@ export class DatabaseService {
     };
   }
 
+  /** Per note, how many live servers are "synced" and how many in "error". */
   async getNoteSyncCounts(): Promise<Record<string, { synced: number; error: number }>> {
+    const live = await this.getLiveSyncConfigIds();
     const result = await this.db.query(
       "SELECT id, sync_per_server_status FROM notes WHERE sync_per_server_status IS NOT NULL"
     );
     const counts: Record<string, { synced: number; error: number }> = {};
     for (const row of result.values ?? []) {
-      if (!row.sync_per_server_status) continue;
-      try {
-        const perServer: Record<string, string> = JSON.parse(row.sync_per_server_status);
-        let synced = 0, error = 0;
-        for (const status of Object.values(perServer)) {
-          if (status === "synced") synced++;
-          else if (status === "error") error++;
-        }
-        if (synced > 0 || error > 0) counts[row.id] = { synced, error };
-      } catch { /* ignore */ }
+      let synced = 0, error = 0;
+      for (const [configId, status] of Object.entries(this.parsePerServerStatus(row.sync_per_server_status))) {
+        if (!live.has(configId)) continue;
+        if (status === "synced") synced++;
+        else if (status === "error") error++;
+      }
+      if (synced > 0 || error > 0) counts[row.id] = { synced, error };
     }
     return counts;
+  }
+
+  /** Runs fn after every earlier per-server writer of this note. */
+  private withPerServerLock<T>(noteId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this._perServerChain.get(noteId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(fn);
+    this._perServerChain.set(noteId, current);
+    current.finally(() => {
+      if (this._perServerChain.get(noteId) === current) this._perServerChain.delete(noteId);
+    }).catch(() => {});
+    return current;
+  }
+
+  /**
+   * Rewrites the per-server statuses of a note under its lock: update
+   * receives the current map and edits it in place. Every writer of the
+   * note's sync state — edit, push settle, pull — runs its read-decide-
+   * write inside one such call, so none acts on a state another changed
+   * meanwhile. update must not call another method that takes this lock
+   * for the same note (setNotePerServerStatus, markNotePendingForConfigs…):
+   * it would wait on itself.
+   */
+  async updateNotePerServerStatus(
+    noteId: string,
+    update: (perServer: Record<string, PerServerSyncStatus>) => void | Promise<void>
+  ): Promise<void> {
+    await this.withPerServerLock(noteId, async () => {
+      const perServer = await this.getNotePerServerStatus(noteId);
+      await update(perServer);
+      await this.db.run(
+        "UPDATE notes SET sync_per_server_status = ? WHERE id = ?",
+        [JSON.stringify(perServer), noteId]
+      );
+    });
   }
 
   async setNotePerServerStatus(
     noteId: string,
     syncConfigId: string,
-    status: "synced" | "error"
+    status: PerServerSyncStatus
   ): Promise<void> {
+    await this.updateNotePerServerStatus(noteId, (perServer) => { perServer[syncConfigId] = status; });
+  }
+
+  /** Drops one server from the note's statuses: nothing is queued for it. */
+  async clearNotePerServerStatus(noteId: string, syncConfigId: string): Promise<void> {
+    await this.updateNotePerServerStatus(noteId, (perServer) => { delete perServer[syncConfigId]; });
+  }
+
+  async getNotePerServerStatus(noteId: string): Promise<Record<string, PerServerSyncStatus>> {
     const result = await this.db.query(
       "SELECT sync_per_server_status FROM notes WHERE id = ?",
       [noteId]
     );
-    const row = result.values?.[0];
-    let perServer: Record<string, string> = {};
-    if (row?.sync_per_server_status) {
-      try { perServer = JSON.parse(row.sync_per_server_status); } catch { /* ignore */ }
+    return this.parsePerServerStatus(result.values?.[0]?.sync_per_server_status);
+  }
+
+  private parsePerServerStatus(raw: string | null | undefined): Record<string, PerServerSyncStatus> {
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
     }
-    perServer[syncConfigId] = status;
-    await this.db.run(
-      "UPDATE notes SET sync_per_server_status = ? WHERE id = ?",
-      [JSON.stringify(perServer), noteId]
+  }
+
+  /**
+   * Marks the note as waiting to be pushed to each of the given servers,
+   * then re-derives its global status. syncAll(config) later pushes exactly
+   * the notes pending (or in error) for that config.
+   */
+  async markNotePendingForConfigs(noteId: string, configIds: string[]): Promise<void> {
+    if (configIds.length === 0) return;
+    await this.updateNotePerServerStatus(noteId, (perServer) => {
+      for (const id of configIds) perServer[id] = "pending";
+    });
+    await this.refreshNoteSyncStatus(noteId);
+  }
+
+  /**
+   * Ids of the applications that can sync — those with a database, the set
+   * loadSyncConfigs builds.
+   */
+  async getLiveSyncConfigIds(): Promise<Set<string>> {
+    const result = await this.db.query("SELECT url, username, database FROM applications");
+    return new Set(
+      (result.values ?? [])
+        .filter((a: any) => a.database)
+        .map((a: any) => syncConfigIdFor(a.url, a.username, a.database))
     );
+  }
+
+  /**
+   * Config ids of the note's live links: links whose remote record still
+   * exists and whose application can still sync, under that same id.
+   */
+  async getLiveLinkConfigIds(noteId: string, except?: string): Promise<string[]> {
+    const live = await this.getLiveSyncConfigIds();
+    const ids = (await this.getNoteLinks(noteId))
+      .filter((l) => l.remoteState === "ok" && live.has(l.configId) && l.configId !== except)
+      .map((l) => l.configId);
+    return [...new Set(ids)];
+  }
+
+  /**
+   * Derives the note's global sync_status from its per-server statuses:
+   * any "conflict", or a live link holding one (params.conflict) →
+   * conflict (the user must act), else any "error" →
+   * error, else any "pending" → pending, else any "synced" → synced. Entries of ids no live application has (deleted, renamed, or
+   * switched to another database) are ignored: nothing would ever clear
+   * them. With no live entry left, the note is "synced" if it still has a
+   * live link, "local" otherwise. A note "synced" or "local" with a
+   * creation still in the outbox for a live server is "pending".
+   */
+  async refreshNoteSyncStatus(noteId: string): Promise<SyncStatus> {
+    const live = await this.getLiveSyncConfigIds();
+    const statuses = Object.entries(await this.getNotePerServerStatus(noteId))
+      .filter(([configId]) => live.has(configId))
+      .map(([, status]) => status);
+    // A link holding a conflict keeps the note in conflict, whatever wrote its server's status last
+    const conflicted = (await this.getNoteLinks(noteId))
+      .some((l) => l.remoteState === "ok" && live.has(l.configId) && !!l.params?.conflict);
+    let status: SyncStatus;
+    if (conflicted || statuses.includes("conflict")) status = "conflict";
+    else if (statuses.includes("error")) status = "error";
+    else if (statuses.includes("pending")) status = "pending";
+    else if (statuses.includes("synced")) status = "synced";
+    else status = (await this.getLiveLinkConfigIds(noteId)).length > 0 ? "synced" : "local";
+    // A creation still in the outbox for a live server (waiting for a choice,
+    // blocked, retrying) is not sent: the note is not synced there yet
+    if (status !== "error" && status !== "pending" && status !== "conflict"
+      && (await this.outboxOpsOrNone(noteId)).some((op) => live.has(op.configId))) {
+      status = "pending";
+    }
+    await this.setNoteSyncInfo(noteId, { syncStatus: status });
+    return status;
+  }
+
+  /**
+   * The note's outbox operations, or none while sync_outbox does not exist
+   * yet: migration 2026102201 derives statuses before 2026102202 creates it.
+   */
+  private async outboxOpsOrNone(noteId: string): Promise<OutboxOp[]> {
+    try {
+      return await this.getOutboxOpsForNote(noteId);
+    } catch {
+      return [];
+    }
+  }
+
+  /** How many notes have each sync status. */
+  async countNotesBySyncStatus(): Promise<Partial<Record<SyncStatus, number>>> {
+    const result = await this.db.query("SELECT sync_status FROM notes");
+    const counts: Partial<Record<SyncStatus, number>> = {};
+    for (const row of result.values ?? []) {
+      const status = (row.sync_status ?? "local") as SyncStatus;
+      counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /** refreshNoteSyncStatus for every note: after an application changed. */
+  async refreshAllNoteSyncStatuses(): Promise<void> {
+    const result = await this.db.query("SELECT id FROM notes");
+    for (const row of result.values ?? []) await this.refreshNoteSyncStatus(row.id);
+  }
+
+  /**
+   * Returns the ids of the notes to push to one server: those whose
+   * per-server status for configId is "pending" or "error". An error stays
+   * queued, so a push that failed (server unreachable right after the
+   * network came back, 5xx…) is retried by the next syncAll.
+   */
+  async getNoteIdsPendingForConfig(configId: string): Promise<string[]> {
+    const result = await this.db.query("SELECT id, sync_per_server_status FROM notes");
+    return (result.values ?? [])
+      .filter((row: any) => {
+        const status = this.parsePerServerStatus(row.sync_per_server_status)[configId];
+        return status === "pending" || status === "error";
+      })
+      .map((row: any) => row.id as string);
+  }
+
+  /**
+   * Rewrites the "url|username" ids older versions stored (last-used
+   * config, remembered selection, per-server status keys) as the current
+   * id of the application with that user on the same server — url
+   * compared with sameServerUrl, since older versions kept the old
+   * spelling when an application's url was edited. An id no application
+   * matches is left as is, and stays non-live. Returns the notes rewritten.
+   */
+  async addDatabaseToLegacySyncConfigIds(): Promise<number> {
+    const apps = (await this.db.query("SELECT url, username, database FROM applications")).values ?? [];
+    const upgraded = new Map<string, string>();
+    const upgrade = (id: string): string | undefined => {
+      if (upgraded.has(id)) return upgraded.get(id);
+      const sep = id.lastIndexOf("|");
+      const [url, username] = [id.slice(0, sep), id.slice(sep + 1)];
+      const app = sep > 0 && id.split("|").length === 2
+        ? apps.find((a: any) => a.username === username && sameServerUrl(a.url, url))
+        : undefined;
+      const result = app ? syncConfigIdFor(app.url, app.username, app.database ?? "") : undefined;
+      if (result) upgraded.set(id, result);
+      return result;
+    };
+    const up = (id: string) => upgrade(id) ?? id;
+    const result = await this.db.query(
+      "SELECT id, sync_config_id, selected_sync_config_ids, sync_per_server_status FROM notes"
+    );
+    let rewritten = 0;
+    for (const row of result.values ?? []) {
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      let selected: string[] | null = null;
+      try { selected = row.selected_sync_config_ids ? JSON.parse(row.selected_sync_config_ids) : null; } catch { /* ignore */ }
+      const touched = (row.sync_config_id && upgrade(row.sync_config_id))
+        || (selected ?? []).some((id) => upgrade(id))
+        || Object.keys(perServer).some((id) => upgrade(id));
+      if (!touched) continue;
+      const newPerServer: Record<string, PerServerSyncStatus> = {};
+      for (const [id, status] of Object.entries(perServer)) newPerServer[up(id)] = status;
+      await this.db.run(
+        "UPDATE notes SET sync_config_id = ?, selected_sync_config_ids = ?, sync_per_server_status = ? WHERE id = ?",
+        [row.sync_config_id ? up(row.sync_config_id) : null,
+         selected ? JSON.stringify([...new Set(selected.map(up))]) : null,
+         JSON.stringify(newPerServer), row.id]
+      );
+      rewritten++;
+    }
+    return rewritten;
+  }
+
+  /**
+   * Notes left "pending" by the global flag of older versions: sync_status
+   * "pending" with no per-server "pending" entry. Read before any step
+   * that writes per-server entries.
+   */
+  async getLegacyPendingNoteIds(): Promise<string[]> {
+    const result = await this.db.query("SELECT id, sync_status, sync_per_server_status FROM notes");
+    return (result.values ?? [])
+      .filter((row: any) => row.sync_status === "pending"
+        && !Object.values(this.parsePerServerStatus(row.sync_per_server_status)).includes("pending"))
+      .map((row: any) => row.id as string);
+  }
+
+  /**
+   * Turns the global "pending" flag of the given notes (see
+   * getLegacyPendingNoteIds) into a per-server "pending" for every server
+   * each targets: its per-server entries, live links, remembered selection
+   * and last-used config. Without it, the first server to sync would clear
+   * the global flag and the others would never receive the note. Returns
+   * the notes converted.
+   */
+  async convertLegacyPendingToPerServer(noteIds: string[]): Promise<number> {
+    const live = await this.getLiveSyncConfigIds();
+    const wanted = new Set(noteIds);
+    const result = await this.db.query(
+      "SELECT id, sync_status, sync_per_server_status, selected_sync_config_ids, sync_config_id FROM notes"
+    );
+    let converted = 0;
+    for (const row of result.values ?? []) {
+      if (!wanted.has(row.id)) continue;
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      const targets = new Set([...Object.keys(perServer), ...await this.getLiveLinkConfigIds(row.id)]);
+      try {
+        for (const id of JSON.parse(row.selected_sync_config_ids ?? "[]")) targets.add(id);
+      } catch { /* ignore */ }
+      if (row.sync_config_id) targets.add(row.sync_config_id);
+      const liveTargets = [...targets].filter((id) => live.has(id));
+      if (liveTargets.length === 0) continue;
+      await this.markNotePendingForConfigs(row.id, liveTargets);
+      converted++;
+    }
+    return converted;
+  }
+
+  /**
+   * Re-keys every sync record of one target after its application's url
+   * was respelled: links, queued operations, pull cursor, last-used
+   * config, remembered selections, per-server statuses, remembered
+   * targets (sync_target_prefs) and the calendar's activities; its probes
+   * and cached records are dropped and fetched again. Without it the next push finds no
+   * link under the new id and creates a duplicate remote record.
+   */
+  async renameSyncConfigId(oldId: string, newId: string): Promise<void> {
+    if (oldId === newId) return;
+    await this.db.run("UPDATE note_links SET config_id = ? WHERE config_id = ?", [newId, oldId]);
+    await this.db.run("UPDATE sync_outbox SET config_id = ? WHERE config_id = ?", [newId, oldId]);
+    await this.deleteServerCapabilities(oldId);
+    await this.db.run("DELETE FROM remote_records_cache WHERE config_id = ?", [oldId]);
+    // The calendar's activities move with their changes still waiting in the outbox
+    for (const a of await this.getCalendarActivities(oldId)) await this.putCalendarActivity({ ...a, configId: newId });
+    await this.db.run("DELETE FROM activities_cache WHERE config_id = ?", [oldId]).catch(() => {});
+    const pref = await this.db.query("SELECT * FROM sync_target_prefs WHERE config_id = ?", [oldId]);
+    for (const row of pref.values ?? []) {
+      await this.db.run("DELETE FROM sync_target_prefs WHERE id = ?", [row.id]);
+      await this.db.run(
+        "INSERT OR REPLACE INTO sync_target_prefs (id, config_id, kind, params_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+        [`${newId}#${row.kind}`, newId, row.kind, row.params_json, row.updated_at]
+      );
+    }
+    await this.renameChatRows(oldId, newId);
+    const cursor = await this.getSyncPullCursor(oldId);
+    if (cursor) {
+      await this.setSyncPullCursor(newId, cursor);
+      await this.db.run("DELETE FROM sync_pull_cursors WHERE scope = ?", [oldId]);
+    }
+    const result = await this.db.query("SELECT id, sync_config_id, selected_sync_config_ids FROM notes");
+    for (const row of result.values ?? []) {
+      let selected: string[] | null = null;
+      try { selected = row.selected_sync_config_ids ? JSON.parse(row.selected_sync_config_ids) : null; } catch { /* ignore */ }
+      const info: Partial<NoteSyncInfo> = {};
+      if (row.sync_config_id === oldId) info.syncConfigId = newId;
+      if (selected?.includes(oldId)) {
+        info.selectedSyncConfigIds = [...new Set(selected.map((id) => (id === oldId ? newId : id)))];
+      }
+      if (Object.keys(info).length > 0) await this.setNoteSyncInfo(row.id, info);
+      await this.updateNotePerServerStatus(row.id, (perServer) => {
+        if (!(oldId in perServer)) return;
+        perServer[newId] = perServer[oldId];
+        delete perServer[oldId];
+      });
+    }
+  }
+
+  // Chat cache
+
+  /**
+   * Chat cache: one row per channel, message, member and partner, keyed
+   * `configId#<id>` so two accounts on one server never share a row (a
+   * message not yet known to the server is `configId#u<clientUuid>`), plus one
+   * sync-state row per source. The text key is the first column of each table.
+   */
+  async createChatTables(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_channels (
+        id                        TEXT PRIMARY KEY NOT NULL,
+        config_id                 TEXT NOT NULL,
+        channel_id                INTEGER NOT NULL,
+        channel_type              TEXT NOT NULL,
+        name                      TEXT NOT NULL,
+        description               TEXT NOT NULL,
+        last_interest_dt          TEXT,
+        unread_counter            INTEGER NOT NULL,
+        needaction_counter        INTEGER NOT NULL,
+        new_message_separator     INTEGER NOT NULL,
+        seen_message_id           INTEGER,
+        mute_until_dt             TEXT,
+        custom_notifications      TEXT,
+        is_member                 INTEGER NOT NULL,
+        local_pinned              INTEGER NOT NULL,
+        last_message_id           INTEGER,
+        oldest_loaded_id          INTEGER,
+        history_complete          INTEGER NOT NULL,
+        correspondent_partner_id  INTEGER,
+        updated_at                TEXT NOT NULL,
+        unread_counter_bus_id     INTEGER NOT NULL DEFAULT 0,
+        needaction_counter_bus_id INTEGER NOT NULL DEFAULT 0,
+        is_pinned                 INTEGER NOT NULL DEFAULT 1,
+        is_editable               INTEGER,
+        custom_channel_name       TEXT,
+        member_count              INTEGER,
+        group_public_id           INTEGER,
+        authorized_group_full_name TEXT,
+        create_uid                INTEGER,
+        group_based_subscription  INTEGER NOT NULL DEFAULT 0,
+        parent_channel_id         INTEGER,
+        create_op_id              TEXT,
+        create_failed             INTEGER NOT NULL DEFAULT 0,
+        left_unsent               INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id                TEXT PRIMARY KEY NOT NULL,
+        config_id         TEXT NOT NULL,
+        channel_id        INTEGER NOT NULL,
+        message_id        INTEGER,
+        client_uuid       TEXT,
+        author_partner_id INTEGER,
+        body              TEXT NOT NULL,
+        date              TEXT NOT NULL,
+        message_type      TEXT NOT NULL,
+        status            TEXT NOT NULL,
+        outbox_op_id      TEXT,
+        write_date        TEXT,
+        parent_id         INTEGER,
+        parent_client_uuid TEXT,
+        recipient_ids     TEXT,
+        search_text       TEXT NOT NULL DEFAULT '',
+        pinned_at         TEXT,
+        starred           INTEGER NOT NULL DEFAULT 0,
+        is_note           INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS chat_messages_channel ON chat_messages (config_id, channel_id)",
+    );
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_members (
+        id                 TEXT PRIMARY KEY NOT NULL,
+        config_id          TEXT NOT NULL,
+        channel_id         INTEGER NOT NULL,
+        member_id          INTEGER NOT NULL,
+        partner_id         INTEGER NOT NULL,
+        seen_message_id    INTEGER,
+        fetched_message_id INTEGER,
+        is_typing          INTEGER NOT NULL,
+        typing_at          TEXT,
+        create_date        TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_partners (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        partner_id INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        im_status  TEXT,
+        write_date TEXT
+      )
+    `);
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_sources (
+        config_id       TEXT PRIMARY KEY NOT NULL,
+        self_partner_id INTEGER,
+        last_bus_id     INTEGER NOT NULL,
+        bus_seen_at     TEXT,
+        ws_version      TEXT,
+        is_system       INTEGER NOT NULL,
+        module_state    TEXT NOT NULL,
+        inbox_counter   INTEGER NOT NULL,
+        loaded_at       TEXT,
+        counter_bus_id  INTEGER NOT NULL DEFAULT 0,
+        internal_user_group_id INTEGER,
+        global_mute_until      TEXT,
+        global_mute_at         TEXT,
+        is_internal_user       INTEGER NOT NULL DEFAULT 0,
+        file_dir               TEXT,
+        module_level           TEXT,
+        starred_counter        INTEGER NOT NULL DEFAULT 0,
+        notification_type      TEXT,
+        channel_notifications    TEXT,
+        channel_notifications_at TEXT
+      )
+    `);
+    await this.createChatMailboxTable();
+    await this.createChatOnTopTable();
+    await this.createChatTempIdsTable();
+    await this.createChatAttachmentsTable();
+    await this.createChatDraftsTable();
+    await this.createChatReactionsTable();
+    await this.createChatAvatarsTable();
+    await this.createChatPushTable();
+    for (const [table, col] of [
+      ["chat_channels", "config_id"],
+      ["chat_messages", "config_id, channel_id"],
+      ["chat_members", "config_id, channel_id"],
+      ["chat_partners", "config_id"],
+    ]) {
+      await this.db.execute(`CREATE INDEX IF NOT EXISTS idx_${table}_cfg ON ${table}(${col})`);
+    }
+    await this.createChatSearchIndex();
+  }
+
+  /**
+   * Adds the conversation management columns (pin, edit right, naming,
+   * access group, membership, a create still running or refused, the
+   * session's group and global mute) to the chat tables of migration
+   * 2026102501, and the table of temporary ids. Each column is added only
+   * when PRAGMA table_info does not list it, so a fresh install
+   * (createChatTables already has them) and a second run change nothing.
+   */
+  async addChatLot2Columns(): Promise<void> {
+    const columns: Record<string, [string, string][]> = {
+      chat_channels: [
+        ["is_pinned", "INTEGER NOT NULL DEFAULT 1"],
+        ["is_editable", "INTEGER"],
+        ["custom_channel_name", "TEXT"],
+        ["member_count", "INTEGER"],
+        ["group_public_id", "INTEGER"],
+        ["authorized_group_full_name", "TEXT"],
+        ["create_uid", "INTEGER"],
+        ["group_based_subscription", "INTEGER NOT NULL DEFAULT 0"],
+        ["parent_channel_id", "INTEGER"],
+        ["create_op_id", "TEXT"],
+        ["create_failed", "INTEGER NOT NULL DEFAULT 0"],
+      ],
+      chat_members: [["create_date", "TEXT"]],
+      chat_sources: [
+        ["internal_user_group_id", "INTEGER"],
+        ["global_mute_until", "TEXT"],
+        ["global_mute_at", "TEXT"],
+        ["is_internal_user", "INTEGER NOT NULL DEFAULT 0"],
+      ],
+    };
+    for (const [table, wanted] of Object.entries(columns)) {
+      const existing = await this.db.query(`PRAGMA table_info(${table})`);
+      const names = (existing.values ?? []).map((r: any) => r.name as string);
+      for (const [col, def] of wanted) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    }
+    await this.createChatTempIdsTable();
+  }
+
+  /**
+   * Adds the flag of a conversation left with texts still queued
+   * (chat_channels.left_unsent) to tables created before it, when PRAGMA
+   * table_info does not list it; a fresh install (createChatTables already
+   * has it) and a second run change nothing.
+   */
+  async addChatLeftUnsent(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_channels)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (!names.includes("left_unsent")) {
+      await this.db.execute("ALTER TABLE chat_channels ADD COLUMN left_unsent INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  /**
+   * Adds the attachments table and the two columns of chat_sources (the
+   * account's random file directory, the server module level) to tables
+   * created before them. Each piece is added only when it is absent, so a
+   * fresh install (createChatTables already has them) and a second run
+   * change nothing.
+   */
+  async addChatAttachments(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_sources)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0) {
+      for (const col of ["file_dir", "module_level"]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_sources ADD COLUMN ${col} TEXT`);
+      }
+    }
+    await this.createChatAttachmentsTable();
+  }
+
+  /**
+   * Adds the drafts table to tables created before it. CREATE TABLE IF NOT
+   * EXISTS: a fresh install (createChatTables already has it) and a second
+   * run change nothing.
+   */
+  async addChatDrafts(): Promise<void> {
+    await this.createChatDraftsTable();
+  }
+
+  /**
+   * Adds chat_attachments.origin (where a draft file was taken) to a table
+   * created before it, when PRAGMA table_info does not list it; a fresh
+   * install (the table already has it), a second run and a database
+   * without the chat tables change nothing.
+   */
+  async addChatDraftOrigin(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_attachments)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0 && !names.includes("origin")) {
+      await this.db.execute("ALTER TABLE chat_attachments ADD COLUMN origin TEXT");
+    }
+  }
+
+  /**
+   * Adds the reactions table and the reply and mention columns of
+   * chat_messages (parent_id, parent_client_uuid, recipient_ids) to tables
+   * created before them. A column is added only when PRAGMA table_info
+   * does not list it, and only to an existing chat_messages; the table is
+   * CREATE TABLE IF NOT EXISTS. A fresh install (createChatTables already
+   * has them) and a second run change nothing.
+   */
+  async addChatActions(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_messages)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length > 0) {
+      for (const [col, def] of [["parent_id", "INTEGER"], ["parent_client_uuid", "TEXT"], ["recipient_ids", "TEXT"]]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`);
+      }
+    }
+    await this.createChatReactionsTable();
+  }
+
+  /**
+   * Adds the reply target, the edit in progress and the mention picks of
+   * chat_drafts (reply_to, edit_of, edit_text, mentions) to a table created
+   * before them. A column is added only when PRAGMA table_info does not
+   * list it, and only to an existing chat_drafts: a fresh install
+   * (createChatDraftsTable already has them), a second run and a database
+   * without the chat tables change nothing.
+   */
+  async addChatDraftModes(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(chat_drafts)");
+    const names = (existing.values ?? []).map((r: any) => r.name as string);
+    if (names.length === 0) return;
+    for (const col of ["reply_to", "edit_of", "edit_text", "mentions"]) {
+      if (!names.includes(col)) await this.db.execute(`ALTER TABLE chat_drafts ADD COLUMN ${col} TEXT`);
+    }
+  }
+
+  /**
+   * Adds the searchable text, the pin date and the starred flag of
+   * chat_messages (search_text, pinned_at, starred) and
+   * chat_sources.starred_counter to tables created before them, then
+   * creates the search index. A column is added only when PRAGMA
+   * table_info does not list it, and only to an existing table: a fresh
+   * install (createChatTables already has them), a second run and a
+   * database without the chat tables change nothing. The rows already
+   * cached keep an empty search_text here; fillChatSearchText gives it to
+   * them after start, so the size of the cache never holds the boot.
+   */
+  async addChatMessageSearch(): Promise<void> {
+    const names = async (table: string) =>
+      ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+    const sources = await names("chat_sources");
+    if (sources.length > 0 && !sources.includes("starred_counter")) {
+      await this.db.execute("ALTER TABLE chat_sources ADD COLUMN starred_counter INTEGER NOT NULL DEFAULT 0");
+    }
+    const messages = await names("chat_messages");
+    if (messages.length === 0) return;
+    for (const [col, def] of [
+      ["search_text", "TEXT NOT NULL DEFAULT ''"],
+      ["pinned_at", "TEXT"],
+      ["starred", "INTEGER NOT NULL DEFAULT 0"],
+    ]) {
+      if (!messages.includes(col)) await this.db.execute(`ALTER TABLE chat_messages ADD COLUMN ${col} ${def}`);
+    }
+    await this.createChatSearchIndex();
+  }
+
+  /**
+   * The mailbox cache: one row per message the inbox, history and starred
+   * boxes show, of any model, keyed `configId#m<messageId>`; the flags say
+   * which boxes hold it and search_text is the folded record name and
+   * body. The IF NOT EXISTS makes it safe to call from the migration and
+   * from createChatTables.
+   */
+  async createChatMailboxTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_mailbox (
+        id                TEXT PRIMARY KEY NOT NULL,
+        config_id         TEXT NOT NULL,
+        message_id        INTEGER NOT NULL,
+        thread_model      TEXT NOT NULL,
+        thread_id         INTEGER NOT NULL,
+        record_name       TEXT NOT NULL DEFAULT '',
+        author_partner_id INTEGER,
+        body              TEXT NOT NULL DEFAULT '',
+        date              TEXT,
+        message_type      TEXT,
+        needaction        INTEGER NOT NULL DEFAULT 0,
+        starred           INTEGER NOT NULL DEFAULT 0,
+        history           INTEGER NOT NULL DEFAULT 0,
+        search_text       TEXT NOT NULL DEFAULT ''
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_mailbox_needaction ON chat_mailbox(config_id, needaction)");
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_mailbox_starred ON chat_mailbox(config_id, starred)");
+  }
+
+  /**
+   * Creates the mailbox table and adds chat_sources.notification_type to
+   * a table created before it. The column is added only when PRAGMA
+   * table_info does not list it and only to an existing table: a fresh
+   * install (createChatTables already has it), a second run and a
+   * database without chat_sources change nothing more.
+   */
+  async addChatMailbox(): Promise<void> {
+    await this.createChatMailboxTable();
+    const sources = ((await this.db.query("PRAGMA table_info(chat_sources)")).values ?? []).map((r: any) => r.name as string);
+    if (sources.length > 0 && !sources.includes("notification_type")) {
+      await this.db.execute("ALTER TABLE chat_sources ADD COLUMN notification_type TEXT");
+    }
+  }
+
+  /**
+   * The conversations kept on top of the list: one row per conversation,
+   * keyed `configId#channelId`, with the moment it was put there. Local to
+   * the phone, never sent to the server.
+   */
+  async createChatOnTopTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_on_top (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        channel_id INTEGER NOT NULL,
+        since      TEXT NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_on_top_config ON chat_on_top(config_id)");
+  }
+
+  /** Creates the on-top table; a second run changes nothing. */
+  async addChatOnTop(): Promise<void> {
+    await this.createChatOnTopTable();
+  }
+
+  /**
+   * Adds the record of a reply on a record (thread_model, thread_id) to
+   * chat_attachments and chat_drafts created before them; a conversation's
+   * rows keep null there. A column is added only when PRAGMA table_info
+   * does not list it, and only to an existing table: a fresh install (the
+   * tables already have them), a second run and a database without the
+   * chat tables change nothing.
+   */
+  async addChatRecordThreads(): Promise<void> {
+    for (const table of ["chat_attachments", "chat_drafts"]) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length === 0) continue;
+      for (const [col, def] of [["thread_model", "TEXT"], ["thread_id", "INTEGER"]]) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    }
+  }
+
+  /**
+   * The authors' avatars cached on the phone: one row per partner and
+   * account, keyed `configId#p<partnerId>`, with the `unique` key the file
+   * was fetched with, its path under the account's chat directory and its
+   * bytes. The IF NOT EXISTS makes it safe to call from the migration and
+   * from createChatTables.
+   */
+  async createChatAvatarsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_avatars (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        partner_id INTEGER NOT NULL,
+        unique_key TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        bytes      INTEGER NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_chat_avatars_config ON chat_avatars(config_id)");
+  }
+
+  /**
+   * The closed-app notifications of each account (ChatPushRow): one row
+   * per config id with its ntfy, its Web Push subscription's public key
+   * and auth secret, the endpoint registered with Odoo, the endpoints left
+   * to unregister (a JSON array) and the lock-screen choice. The private
+   * key and the ntfy token stay in native code. The IF NOT EXISTS makes it
+   * safe to call from the migration and from createChatTables.
+   */
+  async createChatPushTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_push (
+        config_id       TEXT PRIMARY KEY NOT NULL,
+        ntfy_url        TEXT,
+        odoo_ntfy_url   TEXT,
+        prefix          TEXT,
+        topic           TEXT,
+        endpoint        TEXT,
+        p256dh          TEXT,
+        auth            TEXT,
+        vapid_key       TEXT,
+        registered_at   TEXT,
+        stale_endpoints TEXT NOT NULL DEFAULT '[]',
+        lock_screen     TEXT NOT NULL DEFAULT 'hidden_locked',
+        ${CHAT_PUSH_PREFS.map(([col, def]) => `${col} ${def}`).join(",\n        ")}
+      )
+    `);
+  }
+
+  /** Migration 2026102801: the chat_push table, made once (createChatPushTable). */
+  async addChatPush(): Promise<void> {
+    await this.createChatPushTable();
+  }
+
+  /**
+   * Migration 2026103001: adds the push preferences (CHAT_PUSH_PREFS) to
+   * chat_push and Odoo's general channel setting with its stale guard
+   * (channel_notifications, channel_notifications_at) to chat_sources. A
+   * column is added only when PRAGMA table_info does not list it, and only
+   * to an existing table: a fresh install (createChatTables already has
+   * them), a second run and a database without the chat tables change
+   * nothing.
+   */
+  async addChatPushPrefs(): Promise<void> {
+    const columns: Record<string, (readonly [string, string])[]> = {
+      chat_push: CHAT_PUSH_PREFS,
+      chat_sources: [
+        ["channel_notifications", "TEXT"],
+        ["channel_notifications_at", "TEXT"],
+      ],
+    };
+    for (const [table, wanted] of Object.entries(columns)) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length === 0) continue;
+      for (const [col, def] of wanted) {
+        if (!names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+      }
+    }
+  }
+
+  /**
+   * Creates the avatars table and adds chat_partners.write_date and
+   * chat_messages.is_note to tables created before them. A column is added
+   * only when PRAGMA table_info does not list it, and only to an existing
+   * table: a fresh install (createChatTables already has them), a second
+   * run and a database without the chat tables change nothing more.
+   */
+  async addChatAvatars(): Promise<void> {
+    await this.createChatAvatarsTable();
+    for (const [table, col, def] of [
+      ["chat_partners", "write_date", "TEXT"],
+      // No backfill: a note cached before the column reads as a message, so it may join a run, until it is read again
+      ["chat_messages", "is_note", "INTEGER NOT NULL DEFAULT 0"],
+    ]) {
+      const names = ((await this.db.query(`PRAGMA table_info(${table})`)).values ?? []).map((r: any) => r.name as string);
+      if (names.length > 0 && !names.includes(col)) await this.db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    }
+  }
+
+  /**
+   * Gives search_text (searchTextOf of the body) to the cached messages
+   * that have a body and an empty search_text: the rows cached before the
+   * column existed. Reads SEARCH_FILL_ROUND rows per query, in id order
+   * from the last one read, and writes each round in one transaction; a
+   * body whose text is empty is read once per call, never looped on. A
+   * write applies only while the row still holds the body it was computed
+   * from, so a message rewritten meanwhile keeps the text of its new body.
+   * A database without search_text is left as it is.
+   */
+  async fillChatSearchText(): Promise<void> {
+    const cols = ((await this.db.query("PRAGMA table_info(chat_messages)")).values ?? []).map((r: any) => r.name);
+    if (!cols.includes("search_text")) return;
+    let after = "";
+    for (;;) {
+      const rows = await this.rawQuery(
+        `SELECT id, body FROM chat_messages WHERE id > ? AND search_text = ? AND body != ? ORDER BY id LIMIT ${SEARCH_FILL_ROUND}`,
+        [after, "", ""],
+      );
+      await this.rawRunSet(rows.map((r) => ({
+        statement: "UPDATE chat_messages SET search_text = ? WHERE id = ? AND body = ?",
+        values: [searchTextOf(r.body), r.id, r.body],
+      })));
+      if (rows.length < SEARCH_FILL_ROUND) return;
+      after = rows[rows.length - 1].id;
+    }
+  }
+
+  /** Memo of chatSearchEngine; createChatSearchIndex clears it. */
+  private searchEngine: Promise<"fts5" | "like"> | null = null;
+
+  /**
+   * Creates chat_search_fts, an FTS5 index of chat_messages.search_text
+   * with the trigram tokenizer (any substring of three characters or
+   * more), when the SQLite build has FTS5 and that tokenizer (SQLite 3.34
+   * and later): the virtual table reads its text from chat_messages by
+   * rowid, the triggers of SEARCH_INDEX_TRIGGERS keep it in step.
+   *
+   * A complete index (all of SEARCH_INDEX_PARTS) is left as it is. Any
+   * other state is made again in this order: the table, a rebuild that
+   * indexes every row, then the triggers. The last trigger is what marks
+   * the index complete, so an app stopped at any step leaves a part
+   * missing and the next call rebuilds; each start makes that call after
+   * the migrations, before any chat write. A row is therefore indexed
+   * before a trigger can delete its entry: deleting an entry the index
+   * never held corrupts an external-content FTS5 index. The plugin splits
+   * statements on a semicolon followed by a line end, so each statement
+   * goes alone, on one line. Any failure leaves no part of the index behind, and
+   * search keeps the LIKE over search_text. A database without
+   * search_text gets nothing.
+   */
+  async createChatSearchIndex(): Promise<void> {
+    this.searchEngine = null;
+    const cols = ((await this.db.query("PRAGMA table_info(chat_messages)")).values ?? []).map((r: any) => r.name);
+    if (!cols.includes("search_text")) return;
+    if ((await this.searchIndexParts()) === SEARCH_INDEX_PARTS.length) return;
+    try {
+      await this.db.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chat_search_fts USING fts5(search_text, content='chat_messages', content_rowid='rowid', tokenize='trigram')",
+      );
+      await this.db.execute("INSERT INTO chat_search_fts(chat_search_fts) VALUES ('rebuild')");
+      for (const sql of Object.values(SEARCH_INDEX_TRIGGERS)) await this.db.execute(sql);
+    } catch (e) {
+      console.warn(`[chat] search index not created, search uses LIKE: ${e instanceof Error ? e.message : e}`);
+      for (const name of Object.keys(SEARCH_INDEX_TRIGGERS)) {
+        try { await this.db.execute(`DROP TRIGGER IF EXISTS ${name}`); } catch { /* absent */ }
+      }
+      try { await this.db.execute("DROP TABLE IF EXISTS chat_search_fts"); } catch { /* absent */ }
+    }
+  }
+
+  /** How many of SEARCH_INDEX_PARTS the schema holds. */
+  private async searchIndexParts(): Promise<number> {
+    const names = new Set((await this.rawQuery("SELECT name FROM sqlite_master")).map((r) => r.name));
+    return SEARCH_INDEX_PARTS.filter((n) => names.has(n)).length;
+  }
+
+  /**
+   * How message search runs on this database: "fts5" when chat_search_fts
+   * and all its triggers exist, else "like" (a LIKE over search_text).
+   * Read once, then memoized; the first read logs `[chat] search engine:`.
+   */
+  chatSearchEngine(): Promise<"fts5" | "like"> {
+    if (!this.searchEngine) {
+      this.searchEngine = this.searchIndexParts().then((n) => {
+        const engine = n === SEARCH_INDEX_PARTS.length ? "fts5" : "like";
+        console.log(`[chat] search engine: ${engine}`);
+        return engine;
+      });
+    }
+    return this.searchEngine;
+  }
+
+  /**
+   * One row per reaction group of a message, keyed
+   * `configId#<messageKey>#<content>`: `message_key` is `m<messageId>`, or
+   * `u<clientUuid>` for a message still queued. `partner_ids` is a JSON
+   * list in the server's order; guests are only counted.
+   */
+  private async createChatReactionsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_reactions (
+        id           TEXT PRIMARY KEY NOT NULL,
+        config_id    TEXT NOT NULL,
+        channel_id   INTEGER NOT NULL,
+        message_key  TEXT NOT NULL,
+        message_id   INTEGER,
+        content      TEXT NOT NULL,
+        count        INTEGER NOT NULL,
+        self_reacted INTEGER NOT NULL,
+        partner_ids  TEXT NOT NULL,
+        guest_count  INTEGER NOT NULL DEFAULT 0,
+        sequence     INTEGER NOT NULL
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS chat_reactions_channel ON chat_reactions (config_id, channel_id)");
+  }
+
+  /**
+   * The text typed in a conversation's composer and not sent yet, one row
+   * per conversation keyed `configId#channelId`. Its files are the
+   * conversation's chat_attachments rows in the "draft" state. `reply_to`
+   * is the message the text answers and `edit_of` the message being edited
+   * (each a JSON MessageTarget, null for none), `edit_text` the edit's text
+   * and `mentions` the people and channels picked in either text (JSON
+   * Mentions). The draft of a reply on a record is keyed
+   * `configId#r<model>#<resId>`, with channel_id 0 and the record in
+   * thread_model / thread_id (null for a conversation's).
+   */
+  private async createChatDraftsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_drafts (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        channel_id INTEGER NOT NULL,
+        text       TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,
+        reply_to   TEXT,
+        edit_of    TEXT,
+        edit_text  TEXT,
+        mentions   TEXT,
+        thread_model TEXT,
+        thread_id  INTEGER
+      )
+    `);
+    await this.db.execute("CREATE INDEX IF NOT EXISTS chat_drafts_config ON chat_drafts (config_id)");
+  }
+
+  /**
+   * One row per file of a message, keyed `configId#a<attachmentId>` or
+   * `configId#l<localUuid>` (see ChatAttachment). The paths and byte
+   * counts describe the files cached on the phone. thread_model /
+   * thread_id name the record of a reply's file (channel_id 0 then), null
+   * for a conversation's.
+   */
+  private async createChatAttachmentsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_attachments (
+        id               TEXT PRIMARY KEY NOT NULL,
+        config_id        TEXT NOT NULL,
+        channel_id       INTEGER NOT NULL,
+        message_id       INTEGER,
+        attachment_id    INTEGER,
+        local_uuid       TEXT,
+        post_client_uuid TEXT,
+        seq              INTEGER NOT NULL DEFAULT 0,
+        name             TEXT NOT NULL,
+        mimetype         TEXT NOT NULL,
+        size             INTEGER NOT NULL,
+        checksum         TEXT,
+        voice            INTEGER NOT NULL DEFAULT 0,
+        thumb_path       TEXT,
+        thumb_bytes      INTEGER NOT NULL DEFAULT 0,
+        original_path    TEXT,
+        original_bytes   INTEGER NOT NULL DEFAULT 0,
+        state            TEXT NOT NULL,
+        error            TEXT,
+        last_opened_at   TEXT,
+        created_at       TEXT NOT NULL,
+        origin           TEXT,
+        thread_model     TEXT,
+        thread_id        INTEGER
+      )
+    `);
+    for (const [name, cols] of [
+      ["channel", "config_id, channel_id"],
+      ["message", "config_id, message_id"],
+      ["post", "config_id, post_client_uuid"],
+    ]) {
+      await this.db.execute(`CREATE INDEX IF NOT EXISTS chat_attachments_${name} ON chat_attachments (${cols})`);
+    }
+  }
+
+  /**
+   * The server id each conversation created on the phone was given, by its
+   * temporary id (row key `configId#<tempId>`): a screen or a route still
+   * naming the temporary id finds the conversation, and a fingerprint
+   * search never adopts a conversation another create already took.
+   */
+  private async createChatTempIdsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_temp_ids (
+        id        TEXT PRIMARY KEY NOT NULL,
+        config_id TEXT NOT NULL,
+        temp_id   INTEGER NOT NULL,
+        real_id   INTEGER NOT NULL
+      )
+    `);
+  }
+
+  /**
+   * Moves the chat rows of one config id under another: the `config_id`
+   * column, and the `configId#` prefix of the key in a table keyed so
+   * (chat_sources and chat_push are keyed by the config id). A table not
+   * created yet is skipped.
+   */
+  private async renameChatRows(oldId: string, newId: string): Promise<void> {
+    for (const table of ["chat_channels", "chat_messages", "chat_members", "chat_partners", "chat_temp_ids", "chat_attachments", "chat_drafts", "chat_reactions", "chat_mailbox", "chat_on_top", "chat_avatars", "chat_sources", "chat_push"]) {
+      try {
+        const keyed = table !== "chat_sources" && table !== "chat_push";
+        const key = keyed ? "id" : "config_id";
+        const result = await this.db.query(`SELECT * FROM ${table} WHERE config_id = ?`, [oldId]);
+        for (const row of result.values ?? []) {
+          const next: Record<string, any> = { ...row, config_id: newId };
+          if (keyed) next.id = newId + String(row.id).slice(oldId.length);
+          await this.db.run(`DELETE FROM ${table} WHERE ${key} = ?`, [row[key]]);
+          const cols = Object.keys(next);
+          await this.db.run(
+            `INSERT OR REPLACE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+            cols.map((c) => next[c])
+          );
+        }
+      } catch { /* table absent on a database not migrated yet */ }
+    }
+  }
+
+  // Pull cursors
+
+  /**
+   * Highest task write_date already pulled, per sync config id: the next
+   * pull starts there instead of re-reading every task since the oldest
+   * link.
+   */
+  async createSyncPullCursorsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_pull_cursors (
+        scope      TEXT PRIMARY KEY NOT NULL,
+        write_date TEXT NOT NULL
+      )
+    `);
+  }
+
+  async getSyncPullCursor(scope: string): Promise<string | null> {
+    const result = await this.db.query("SELECT write_date FROM sync_pull_cursors WHERE scope = ?", [scope]);
+    return result.values?.[0]?.write_date ?? null;
+  }
+
+  async setSyncPullCursor(scope: string, writeDate: string): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO sync_pull_cursors (scope, write_date) VALUES (?, ?)",
+      [scope, writeDate]
+    );
+  }
+
+  // Note links
+
+  async createNoteLinksTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS note_links (
+        id             TEXT PRIMARY KEY NOT NULL,
+        note_id        TEXT NOT NULL,
+        config_id      TEXT NOT NULL,
+        model          TEXT NOT NULL,
+        res_id         INTEGER NOT NULL,
+        kind           TEXT NOT NULL,
+        remote_state   TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        last_synced_at TEXT,
+        client_uuid    TEXT,
+        params_json    TEXT
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_note_links_note ON note_links(note_id)"
+    );
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_note_links_config ON note_links(config_id)"
+    );
+  }
+
+  async addNoteLink(link: NoteLink): Promise<void> {
+    await this.db.run(
+      "INSERT INTO note_links (id, note_id, config_id, model, res_id, kind, remote_state, created_at, last_synced_at, client_uuid, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [link.id, link.noteId, link.configId, link.model, link.resId, link.kind,
+       link.remoteState, link.createdAt, link.lastSyncedAt, link.clientUuid ?? null,
+       JSON.stringify(link.params ?? {})]
+    );
+  }
+
+  async getNoteLinks(noteId: string): Promise<NoteLink[]> {
+    const result = await this.db.query("SELECT * FROM note_links WHERE note_id = ?", [noteId]);
+    return (result.values ?? []).map((row: any) => this.rowToNoteLink(row));
+  }
+
+  async getNoteLinksForConfig(configId: string): Promise<NoteLink[]> {
+    const result = await this.db.query("SELECT * FROM note_links WHERE config_id = ?", [configId]);
+    return (result.values ?? []).map((row: any) => this.rowToNoteLink(row));
+  }
+
+  /**
+   * The note's link to (config, model, kind) whose remote record still
+   * exists; with includeDeleted, the most recently created deleted one
+   * when no live one exists (a record recreated, then deleted again,
+   * leaves several). Dismissed links are never returned.
+   */
+  async findNoteLink(
+    noteId: string,
+    configId: string,
+    model: string,
+    kind: NoteLinkKind,
+    includeDeleted = false
+  ): Promise<NoteLink | null> {
+    const matching = (await this.getNoteLinks(noteId))
+      .filter((l) => l.configId === configId && l.model === model && l.kind === kind && l.remoteState !== "dismissed");
+    const latest = [...matching].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0];
+    return matching.find((l) => l.remoteState === "ok")
+      ?? (includeDeleted ? latest ?? null : null);
+  }
+
+  /** Marks a deleted link dismissed: see NoteLink.remoteState. */
+  async setNoteLinkDismissed(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["dismissed", linkId]);
+  }
+
+  async setNoteLinkRemoteDeleted(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["deleted", linkId]);
+  }
+
+  /** Replaces a link's params (see NoteLink.params). */
+  async setNoteLinkParams(linkId: string, params: Record<string, any>): Promise<void> {
+    await this.db.run("UPDATE note_links SET params_json = ? WHERE id = ?", [JSON.stringify(params), linkId]);
+  }
+
+  /** Marks an activity link done: see NoteLink.remoteState. */
+  async setNoteLinkDone(linkId: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET remote_state = ? WHERE id = ?", ["done", linkId]);
+  }
+
+  async setNoteLinkSyncedAt(linkId: string, lastSyncedAt: string): Promise<void> {
+    await this.db.run("UPDATE note_links SET last_synced_at = ? WHERE id = ?", [lastSyncedAt, linkId]);
+  }
+
+  async deleteNoteLinks(noteId: string): Promise<void> {
+    await this.db.run("DELETE FROM note_links WHERE note_id = ?", [noteId]);
+  }
+
+  private rowToNoteLink(row: any): NoteLink {
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return {
+      id: row.id,
+      noteId: row.note_id,
+      configId: row.config_id,
+      model: row.model,
+      resId: Number(row.res_id),
+      kind: row.kind === "activity" || row.kind === "message" ? row.kind : "create",
+      remoteState: NOTE_LINK_REMOTE_STATES.includes(row.remote_state) ? row.remote_state : "ok",
+      createdAt: row.created_at,
+      lastSyncedAt: row.last_synced_at ?? null,
+      clientUuid: row.client_uuid ?? null,
+      params,
+    };
+  }
+
+  /** For a note_links table created before the params_json column existed. */
+  async addParamsToNoteLinks(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(note_links)");
+    if (!(existing.values ?? []).some((r: any) => r.name === "params_json")) {
+      await this.db.execute("ALTER TABLE note_links ADD COLUMN params_json TEXT");
+    }
+  }
+
+  /** For a note_links table created before the column existed. */
+  async addClientUuidToNoteLinks(): Promise<void> {
+    const existing = await this.db.query("PRAGMA table_info(note_links)");
+    if (!(existing.values ?? []).some((r: any) => r.name === "client_uuid")) {
+      await this.db.execute("ALTER TABLE note_links ADD COLUMN client_uuid TEXT");
+    }
+  }
+
+  // Activity calendar
+
+  async createActivitiesCacheTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS activities_cache (
+        id         TEXT PRIMARY KEY NOT NULL,
+        config_id  TEXT NOT NULL,
+        res_id     INTEGER NOT NULL,
+        deadline   TEXT NOT NULL,
+        data_json  TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_activities_cache_config ON activities_cache(config_id)"
+    );
+  }
+
+  /** Replaces the cached activities of one server with those just read. */
+  async replaceCalendarActivities(configId: string, activities: CalendarActivity[]): Promise<void> {
+    await this.db.run("DELETE FROM activities_cache WHERE config_id = ?", [configId]);
+    for (const a of activities) await this.putCalendarActivity(a);
+  }
+
+  /** Adds or replaces one cached activity. */
+  async putCalendarActivity(a: CalendarActivity): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO activities_cache (id, config_id, res_id, deadline, data_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [`${a.configId}#${a.resId}`, a.configId, a.resId, a.deadline, JSON.stringify(a), a.fetchedAt]
+    );
+  }
+
+  async deleteCalendarActivity(configId: string, resId: number): Promise<void> {
+    await this.db.run("DELETE FROM activities_cache WHERE id = ?", [`${configId}#${resId}`]);
+  }
+
+  /** The cached activities of one server; none for a table not created yet. */
+  async getCalendarActivities(configId: string): Promise<CalendarActivity[]> {
+    try {
+      const result = await this.db.query("SELECT * FROM activities_cache WHERE config_id = ?", [configId]);
+      const rows: CalendarActivity[] = [];
+      for (const row of result.values ?? []) {
+        try { rows.push(JSON.parse(row.data_json)); } catch { /* skip a damaged row */ }
+      }
+      return rows;
+    } catch {
+      return [];
+    }
+  }
+
+  // Outbox
+
+  async createSyncOutboxTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_outbox (
+        id              TEXT PRIMARY KEY NOT NULL,
+        client_uuid     TEXT NOT NULL,
+        note_id         TEXT NOT NULL,
+        config_id       TEXT NOT NULL,
+        kind            TEXT NOT NULL,
+        params_json     TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        attempts        INTEGER NOT NULL,
+        next_attempt_at TEXT,
+        last_error      TEXT,
+        depends_on      TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_sync_outbox_config ON sync_outbox(config_id)"
+    );
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_sync_outbox_note ON sync_outbox(note_id)"
+    );
+  }
+
+  async addOutboxOp(op: OutboxOp): Promise<void> {
+    await this.db.run(
+      "INSERT INTO sync_outbox (id, client_uuid, note_id, config_id, kind, params_json, status, attempts, next_attempt_at, last_error, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [op.id, op.clientUuid, op.noteId, op.configId, op.kind, JSON.stringify(op.params),
+       op.status, op.attempts, op.nextAttemptAt, op.lastError, op.dependsOn, op.createdAt, op.updatedAt]
+    );
+  }
+
+  async getOutboxOp(id: string): Promise<OutboxOp | null> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE id = ?", [id]);
+    const row = result.values?.[0];
+    return row ? this.rowToOutboxOp(row) : null;
+  }
+
+  /** Operations of one server, oldest first. */
+  async getOutboxOpsForConfig(configId: string): Promise<OutboxOp[]> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE config_id = ?", [configId]);
+    return this.sortOutboxOps(result.values ?? []);
+  }
+
+  /** Operations of one note, oldest first. */
+  async getOutboxOpsForNote(noteId: string): Promise<OutboxOp[]> {
+    const result = await this.db.query("SELECT * FROM sync_outbox WHERE note_id = ?", [noteId]);
+    return this.sortOutboxOps(result.values ?? []);
+  }
+
+  /** Writes the given fields of one operation; updatedAt is always set. */
+  async updateOutboxOp(
+    id: string,
+    update: Partial<Pick<OutboxOp, "params" | "status" | "attempts" | "nextAttemptAt" | "lastError" | "dependsOn">>
+      & { updatedAt: string }
+  ): Promise<void> {
+    const columns: Record<string, string> = {
+      params: "params_json", status: "status", attempts: "attempts",
+      nextAttemptAt: "next_attempt_at", lastError: "last_error",
+      dependsOn: "depends_on", updatedAt: "updated_at",
+    };
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const [key, column] of Object.entries(columns)) {
+      if (!(key in update)) continue;
+      const value = (update as any)[key];
+      sets.push(`${column} = ?`);
+      values.push(key === "params" ? JSON.stringify(value) : value);
+    }
+    await this.db.run(`UPDATE sync_outbox SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);
+  }
+
+  async deleteOutboxOp(id: string): Promise<void> {
+    await this.db.run("DELETE FROM sync_outbox WHERE id = ?", [id]);
+  }
+
+  async deleteOutboxOpsForNote(noteId: string): Promise<void> {
+    await this.db.run("DELETE FROM sync_outbox WHERE note_id = ?", [noteId]);
+  }
+
+  /**
+   * Turns the operations left "running" by an interrupted app into
+   * "failed", due now. Their attempts count stays, so the next run looks
+   * for what the cut-short run may already have done. Returns how many.
+   */
+  async failInterruptedOutboxOps(now: string): Promise<number> {
+    const result = await this.db.query("SELECT id FROM sync_outbox WHERE status = ?", ["running"]);
+    const ids = (result.values ?? []).map((r: any) => r.id as string);
+    for (const id of ids) {
+      await this.updateOutboxOp(id, {
+        status: "failed", nextAttemptAt: now, lastError: "interrupted", updatedAt: now,
+      });
+    }
+    return ids.length;
+  }
+
+  private sortOutboxOps(rows: any[]): OutboxOp[] {
+    return rows
+      .map((row) => this.rowToOutboxOp(row))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  }
+
+  private rowToOutboxOp(row: any): OutboxOp {
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return {
+      id: row.id,
+      clientUuid: row.client_uuid,
+      noteId: row.note_id,
+      configId: row.config_id,
+      kind: row.kind,
+      params,
+      status: row.status as OutboxStatus,
+      attempts: Number(row.attempts ?? 0),
+      nextAttemptAt: row.next_attempt_at ?? null,
+      lastError: row.last_error ?? null,
+      dependsOn: row.depends_on ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  // Server capabilities
+
+  async createServerCapabilitiesTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS server_capabilities (
+        id             TEXT PRIMARY KEY NOT NULL,
+        config_id      TEXT NOT NULL,
+        model          TEXT NOT NULL,
+        exists_flag    INTEGER NOT NULL,
+        can_read       INTEGER,
+        can_create     INTEGER,
+        can_write      INTEGER,
+        has_activities INTEGER NOT NULL,
+        has_chatter    INTEGER NOT NULL,
+        fields_json    TEXT NOT NULL,
+        odoo_version   INTEGER NOT NULL,
+        probed_at      TEXT NOT NULL,
+        error          TEXT
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_server_capabilities_config ON server_capabilities(config_id)"
+    );
+  }
+
+  async setServerCapability(cap: ServerCapability): Promise<void> {
+    const flag = (v: boolean | null) => (v === null ? null : v ? 1 : 0);
+    await this.db.run(
+      "INSERT OR REPLACE INTO server_capabilities (id, config_id, model, exists_flag, can_read, can_create, can_write, has_activities, has_chatter, fields_json, odoo_version, probed_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [this.capabilityId(cap.configId, cap.model), cap.configId, cap.model, cap.exists ? 1 : 0,
+       flag(cap.canRead), flag(cap.canCreate), flag(cap.canWrite),
+       cap.hasActivities ? 1 : 0, cap.hasChatter ? 1 : 0, JSON.stringify(cap.fields),
+       cap.odooVersion, cap.probedAt, cap.error]
+    );
+  }
+
+  async getServerCapability(configId: string, model: string): Promise<ServerCapability | null> {
+    const result = await this.db.query(
+      "SELECT * FROM server_capabilities WHERE id = ?",
+      [this.capabilityId(configId, model)]
+    );
+    const row = result.values?.[0];
+    if (!row) return null;
+    const flag = (v: any) => (v === null || v === undefined ? null : Number(v) === 1);
+    let fields: Record<string, any> = {};
+    try { fields = JSON.parse(row.fields_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return {
+      configId: row.config_id,
+      model: row.model,
+      exists: Number(row.exists_flag) === 1,
+      canRead: flag(row.can_read),
+      canCreate: flag(row.can_create),
+      canWrite: flag(row.can_write),
+      hasActivities: Number(row.has_activities) === 1,
+      hasChatter: Number(row.has_chatter) === 1,
+      fields,
+      odooVersion: Number(row.odoo_version),
+      probedAt: row.probed_at,
+      error: row.error ?? null,
+    };
+  }
+
+  /** Forgets every probe of one server: they are redone on next use. */
+  async deleteServerCapabilities(configId: string): Promise<void> {
+    await this.db.run("DELETE FROM server_capabilities WHERE config_id = ?", [configId]);
+  }
+
+  /** Primary key of a capability row: one per server and model. */
+  private capabilityId(configId: string, model: string): string {
+    return `${configId}#${model}`;
+  }
+
+  // Remote records cache
+
+  async createRemoteRecordsCacheTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS remote_records_cache (
+        id           TEXT PRIMARY KEY NOT NULL,
+        config_id    TEXT NOT NULL,
+        model        TEXT NOT NULL,
+        res_id       INTEGER NOT NULL,
+        display_name TEXT NOT NULL,
+        extra_json   TEXT NOT NULL,
+        fetched_at   TEXT NOT NULL
+      )
+    `);
+    await this.db.execute(
+      "CREATE INDEX IF NOT EXISTS idx_remote_records_cache_config_model ON remote_records_cache(config_id, model)"
+    );
+  }
+
+  /**
+   * Replaces the cached records of one model on one server with records:
+   * a record the server no longer returned is dropped from the cache.
+   */
+  async replaceRemoteRecords(configId: string, model: string, records: RemoteRecord[]): Promise<void> {
+    await this.db.run("DELETE FROM remote_records_cache WHERE config_id = ? AND model = ?", [configId, model]);
+    for (const r of records) {
+      await this.db.run(
+        "INSERT OR REPLACE INTO remote_records_cache (id, config_id, model, res_id, display_name, extra_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [`${configId}#${model}#${r.resId}`, configId, model, r.resId, r.displayName,
+         JSON.stringify(r.extra ?? {}), r.fetchedAt]
+      );
+    }
+  }
+
+  /**
+   * Adds or refreshes cached records of one model on one server, then
+   * keeps only the keep most recently fetched ones of that model there.
+   */
+  async upsertRemoteRecords(configId: string, model: string, records: RemoteRecord[], keep: number): Promise<void> {
+    for (const r of records) {
+      await this.db.run(
+        "INSERT OR REPLACE INTO remote_records_cache (id, config_id, model, res_id, display_name, extra_json, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [`${configId}#${model}#${r.resId}`, configId, model, r.resId, r.displayName,
+         JSON.stringify(r.extra ?? {}), r.fetchedAt]
+      );
+    }
+    const all = await this.getRemoteRecords(configId, model);
+    const stale = [...all].sort((a, b) => b.fetchedAt.localeCompare(a.fetchedAt)).slice(keep);
+    for (const r of stale) {
+      await this.db.run("DELETE FROM remote_records_cache WHERE id = ?", [`${configId}#${model}#${r.resId}`]);
+    }
+  }
+
+  /** Cached records of one model on one server, by display name. */
+  async getRemoteRecords(configId: string, model: string): Promise<RemoteRecord[]> {
+    const result = await this.db.query(
+      "SELECT * FROM remote_records_cache WHERE config_id = ? AND model = ?",
+      [configId, model]
+    );
+    return (result.values ?? [])
+      .map((row: any) => {
+        let extra: Record<string, any> = {};
+        try { extra = JSON.parse(row.extra_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+        return {
+          configId: row.config_id,
+          model: row.model,
+          resId: Number(row.res_id),
+          displayName: row.display_name,
+          extra,
+          fetchedAt: row.fetched_at,
+        };
+      })
+      .sort((a: RemoteRecord, b: RemoteRecord) => a.displayName.localeCompare(b.displayName));
+  }
+
+  // Sync target preferences
+
+  async createSyncTargetPrefsTable(): Promise<void> {
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS sync_target_prefs (
+        id          TEXT PRIMARY KEY NOT NULL,
+        config_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      )
+    `);
+  }
+
+  async setSyncTargetPref(pref: SyncTargetPref): Promise<void> {
+    await this.db.run(
+      "INSERT OR REPLACE INTO sync_target_prefs (id, config_id, kind, params_json, updated_at) VALUES (?, ?, ?, ?, ?)",
+      [`${pref.configId}#${pref.kind}`, pref.configId, pref.kind, JSON.stringify(pref.params), pref.updatedAt]
+    );
+  }
+
+  async getSyncTargetPref(configId: string, kind: string): Promise<SyncTargetPref | null> {
+    const result = await this.db.query("SELECT * FROM sync_target_prefs WHERE id = ?", [`${configId}#${kind}`]);
+    const row = result.values?.[0];
+    if (!row) return null;
+    let params: Record<string, any> = {};
+    try { params = JSON.parse(row.params_json ?? "{}") ?? {}; } catch { /* keep {} */ }
+    return { configId: row.config_id, kind: row.kind, params, updatedAt: row.updated_at };
+  }
+
+  /**
+   * Copies the single binding of older versions (notes.odoo_id + odoo_url,
+   * a project.task) into note_links. Expects the ids already upgraded by
+   * addDatabaseToLegacySyncConfigIds.
+   *
+   * The id was issued by one database at odoo_url, and nothing recorded
+   * which one; older versions also write()-ed it to every server a note was
+   * pushed to. So a link is written only where the id is unambiguous: all
+   * applications at odoo_url point at one database. It goes to the configs
+   * the note recorded there (sync_config_id, "synced" per-server keys), or,
+   * when it recorded none, to the one application at that url. Every other
+   * live target of the note (selection, per-server keys) is queued
+   * "pending", so it gets a record of its own rather than a foreign one.
+   * Re-running writes no duplicate. Returns the links written.
+   */
+  async backfillNoteLinksFromLegacyColumns(newId: () => string): Promise<number> {
+    const notes = await this.db.query(
+      "SELECT id, odoo_id, odoo_url, sync_config_id, selected_sync_config_ids, sync_per_server_status, last_synced_at FROM notes"
+    );
+    const apps = (await this.db.query("SELECT url, username, database FROM applications")).values ?? [];
+    const live = await this.getLiveSyncConfigIds();
+    let written = 0;
+    for (const row of notes.values ?? []) {
+      if (row.odoo_id === null || row.odoo_id === undefined || !row.odoo_url) continue;
+      const perServer = this.parsePerServerStatus(row.sync_per_server_status);
+      // Applications without a database cannot sync and say nothing here
+      const atUrl = apps.filter((a: any) => a.database && sameServerUrl(a.url, row.odoo_url));
+      const idsAtUrl = new Set<string>(atUrl.map((a: any) => syncConfigIdFor(a.url, a.username, a.database ?? "")));
+      const unambiguous = new Set(atUrl.map((a: any) => a.database ?? "")).size === 1;
+
+      const linked = new Set<string>();
+      if (unambiguous) {
+        if (row.sync_config_id && idsAtUrl.has(row.sync_config_id)) linked.add(row.sync_config_id);
+        for (const [configId, status] of Object.entries(perServer)) {
+          if (status === "synced" && idsAtUrl.has(configId)) linked.add(configId);
+        }
+        if (linked.size === 0 && atUrl.length === 1) linked.add([...idsAtUrl][0]);
+      }
+      for (const configId of linked) {
+        if (await this.findNoteLink(row.id, configId, "project.task", "create")) continue;
+        await this.addNoteLink({
+          id: newId(),
+          noteId: row.id,
+          configId,
+          model: "project.task",
+          resId: Number(row.odoo_id),
+          kind: "create",
+          remoteState: "ok",
+          createdAt: row.last_synced_at ?? new Date().toISOString(),
+          lastSyncedAt: row.last_synced_at ?? null,
+        });
+        written++;
+      }
+
+      const targets = new Set<string>(Object.keys(perServer));
+      try {
+        for (const id of JSON.parse(row.selected_sync_config_ids ?? "[]")) targets.add(id);
+      } catch { /* ignore */ }
+      if (row.sync_config_id) targets.add(row.sync_config_id);
+      const unlinked = [...targets].filter((id) => live.has(id) && !linked.has(id)
+        && perServer[id] !== "pending");
+      if (unlinked.length > 0) await this.markNotePendingForConfigs(row.id, unlinked);
+    }
+    return written;
   }
 
   async getNoteRawData(noteId: string): Promise<Record<string, any> | null> {

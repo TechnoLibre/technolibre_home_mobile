@@ -1,0 +1,115 @@
+// Sits between the messages and the composer row: it takes its own height
+// (the sheet, the chips, the recording line), the messages keep the rest.
+.chat-attach {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	flex: none;
+}
+
+.chat-attach__input {
+	display: none;
+}
+
+.chat-attach__sheet {
+	display: flex;
+	flex-direction: column;
+	padding: 0.3rem 0.5rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 0.6rem;
+	background: var(--background, #fff);
+}
+
+.chat-attach__item {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 0.3rem;
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+}
+
+.chat-attach__limit {
+	margin: 0.2rem 0.3rem 0.1rem;
+	font-size: 0.8rem;
+	opacity: 0.7;
+}
+
+.chat-attach__chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: 5.5rem;
+	overflow-y: auto;
+}
+
+.chat-attach__chip {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	max-width: 100%;
+	padding: 0.15rem 0.2rem 0.15rem 0.6rem;
+	border: 1px solid var(--text-greyed-out);
+	border-radius: 1rem;
+	font-size: 0.85rem;
+}
+
+.chat-attach__chip-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-attach__chip-size {
+	flex: none;
+	opacity: 0.7;
+}
+
+.chat-attach__chip-remove,
+.chat-attach__voice-discard {
+	flex: none;
+	border: none;
+	background: transparent;
+	color: inherit;
+	min-width: 2rem;
+	min-height: 2rem;
+}
+
+.chat-attach__voice {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin: 0;
+	font-size: 0.9rem;
+}
+
+.chat-attach__voice-dot {
+	width: 0.6rem;
+	height: 0.6rem;
+	border-radius: 50%;
+	background: #c0392b;
+}
+
+.chat-attach__voice-time {
+	flex: 1;
+	font-variant-numeric: tabular-nums;
+}
+
+.chat-attach__staging {
+	margin: 0;
+	font-size: 0.85rem;
+	opacity: 0.7;
+}
+
+.chat-attach__notice {
+	margin: 0;
+	font-size: 0.85rem;
+	color: #c0392b;
+}

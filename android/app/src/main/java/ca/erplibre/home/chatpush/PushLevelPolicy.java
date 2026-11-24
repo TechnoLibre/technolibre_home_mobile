@@ -1,0 +1,141 @@
+package ca.erplibre.home.chatpush;
+
+/**
+ * Turns the level the user chose (1 to 5) into what the app does: how it
+ * listens (realtime stream, 15 or 60 minute poll, nothing), whether a
+ * permanent foreground service is needed, and whether Odoo itself is still
+ * asked for the unread state. A LevelClimber may raise the level from the
+ * power state (BatteryClimber); NO_CLIMB leaves it alone.
+ */
+final class PushLevelPolicy {
+
+    private PushLevelPolicy() {}
+
+    enum Mode { REALTIME, POLL_15, POLL_60, OFF }
+
+    /**
+     * Network and battery facts a climber decides on. plugged is a power
+     * source of any kind (charger, USB, wireless), whether or not the
+     * battery is charging.
+     */
+    static final class PowerState {
+        final boolean wifi;
+        final boolean plugged;
+        final boolean saver;
+        final int batteryPct;
+
+        PowerState(boolean wifi, boolean plugged, boolean saver, int batteryPct) {
+            this.wifi = wifi;
+            this.plugged = plugged;
+            this.saver = saver;
+            this.batteryPct = batteryPct;
+        }
+    }
+
+    /**
+     * A climber's answer: the level to apply and why, "" when nothing raised
+     * it, and the threshold steps in force (0, 1 or 2), which the next
+     * decision takes as its held steps (BatteryClimber).
+     */
+    static final class Climb {
+        final int level;
+        final String reason;
+        final int steps;
+
+        Climb(int level, String reason) {
+            this(level, reason, 0);
+        }
+
+        Climb(int level, String reason, int steps) {
+            this.level = level;
+            this.reason = reason == null ? "" : reason;
+            this.steps = steps;
+        }
+    }
+
+    /** Returns the level to apply for the chosen one; the level is clamped to 1..5 by resolve. */
+    interface LevelClimber {
+        Climb climb(int chosen, PowerState s);
+    }
+
+    static final LevelClimber NO_CLIMB = (chosen, s) -> new Climb(chosen, "");
+
+    static final class Effective {
+        final int level;
+        final Mode mode;
+        final boolean permanentService;
+        final boolean odooDirect;
+        /** The climber's reason (saver, below_one, below_two), "" when the level is the chosen one. */
+        final String climbReason;
+        /** The climber's threshold steps in force (Climb.steps), 0 when climbReason is "". */
+        final int climbSteps;
+
+        Effective(int level, Mode mode, boolean permanentService, boolean odooDirect, String climbReason) {
+            this(level, mode, permanentService, odooDirect, climbReason, 0);
+        }
+
+        Effective(int level, Mode mode, boolean permanentService, boolean odooDirect, String climbReason,
+                int climbSteps) {
+            this.level = level;
+            this.mode = mode;
+            this.permanentService = permanentService;
+            this.odooDirect = odooDirect;
+            this.climbReason = climbReason;
+            this.climbSteps = climbSteps;
+        }
+    }
+
+    /**
+     * Level 1 keeps the stream open; 2 does too on wifi or plugged in, else
+     * polls every 15 minutes, with the service either way; 3 polls every 15
+     * minutes, 4 every 60; 5 is off and leaves Odoo's unread state alone. A
+     * build without the realtime service maps 1 and 2 to 3. The climb reason
+     * is kept only when the level differs from the chosen one after that
+     * mapping: a chosen 1 or 2 that the build maps to 3 is no climb, and
+     * holds no steps either (BatteryClimber holds steps only while they
+     * raise the level).
+     */
+    static Effective resolve(int chosen, PowerState s, boolean realtimeBuild, LevelClimber climber) {
+        Climb climb = climber.climb(chosen, s);
+        int level = buildLevel(clamp(climb.level), realtimeBuild);
+        String reason = level == buildLevel(clamp(chosen), realtimeBuild) ? "" : climb.reason;
+        Mode mode;
+        boolean permanent = false;
+        switch (level) {
+            case 1:
+                mode = Mode.REALTIME;
+                permanent = true;
+                break;
+            case 2:
+                mode = s.wifi || s.plugged ? Mode.REALTIME : Mode.POLL_15;
+                permanent = true;
+                break;
+            case 3:
+                mode = Mode.POLL_15;
+                break;
+            case 4:
+                mode = Mode.POLL_60;
+                break;
+            default:
+                mode = Mode.OFF;
+                break;
+        }
+        return new Effective(level, mode, permanent, level <= 4, reason, reason.isEmpty() ? 0 : climb.steps);
+    }
+
+    /**
+     * What a level wanting the permanent service does while none runs: it
+     * polls every 15 minutes, keeping its level and its want of the service.
+     */
+    static Effective withoutService(Effective e) {
+        return new Effective(e.level, Mode.POLL_15, e.permanentService, e.odooDirect, e.climbReason, e.climbSteps);
+    }
+
+    private static int buildLevel(int level, boolean realtimeBuild) {
+        return !realtimeBuild && level < 3 ? 3 : level;
+    }
+
+    private static int clamp(int level) {
+        return Math.max(1, Math.min(5, level));
+    }
+}

@@ -1,0 +1,65 @@
+// « Messages épinglés »: a sheet over the thread (.chat-sheet), one button per pinned message.
+.chat-pinned__title {
+	margin: 0.2rem 0 0.4rem;
+	font-size: 1.1rem;
+}
+
+.chat-pinned__offline,
+.chat-pinned__none {
+	margin: 0.2rem 0 0.5rem;
+	font-size: 0.85rem;
+	opacity: 0.75;
+}
+
+.chat-pinned__list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.chat-pinned__item {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	width: 100%;
+	padding: 0.5rem 0.25rem;
+	border: none;
+	border-bottom: 1px solid var(--text-greyed-out);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+}
+
+.chat-pinned__meta {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	font-size: 0.8rem;
+}
+
+.chat-pinned__author {
+	font-weight: 600;
+}
+
+.chat-pinned__item--unread .chat-pinned__author {
+	color: #2e9e4f;
+}
+
+.chat-pinned__unread {
+	padding: 0 0.35rem;
+	border-radius: 0.6rem;
+	background: rgba(46, 158, 79, 0.2);
+	font-size: 0.7rem;
+}
+
+.chat-pinned__date {
+	margin-left: auto;
+	opacity: 0.7;
+}
+
+.chat-pinned__snippet {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

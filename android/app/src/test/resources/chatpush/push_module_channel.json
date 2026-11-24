@@ -1,0 +1,1 @@
+{"title": "#canal module - MS Chat", "options": {"icon": "/web/image/res.partner/9/avatar_128", "data": {"model": "discuss.channel", "res_id": 5, "action": "mail.action_discuss", "erplibre": {"v": 1, "message_id": 19, "channel_type": "channel"}}, "body": "@Administrator peux-tu relire le devis ?"}}

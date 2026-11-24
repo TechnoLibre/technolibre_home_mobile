@@ -1,0 +1,14 @@
+{
+  "id": 27,
+  "message": {
+    "type": "mail.record/insert",
+    "payload": {
+      "discuss.channel": [
+        {
+          "custom_notifications": "no_notif",
+          "id": 4
+        }
+      ]
+    }
+  }
+}

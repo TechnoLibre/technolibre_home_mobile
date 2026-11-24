@@ -5,12 +5,14 @@ import {Capacitor} from "@capacitor/core";
 import type {PluginListenerHandle} from "@capacitor/core";
 
 import {Application, ApplicationID} from "../../models/application";
+import {syncConfigIdFor} from "../../models/syncConfig";
 import {Server, ServerID} from "../../models/server";
 import {BiometryUtils} from "../../utils/biometryUtils";
 import {EnhancedComponent} from "../../js/enhancedComponent";
 import {ErrorMessages} from "../../constants/errorMessages";
 import {Events} from "../../constants/events";
 import {WebViewUtils} from "../../utils/webViewUtils";
+import {assertUrlAllowed} from "../../services/odoo/httpPolicy";
 import {NetworkScanPlugin} from "../../plugins/networkScanPlugin";
 import type {ScannedHost} from "../../plugins/networkScanPlugin";
 
@@ -335,6 +337,14 @@ export class ApplicationsComponent extends EnhancedComponent {
             return;
         }
 
+        // The login script types the password into the page: same rule as sync requests
+        try {
+            assertUrlAllowed(/^https?:\/\//i.test(matchingApp.url) ? matchingApp.url : "https://" + matchingApp.url);
+        } catch (error: unknown) {
+            Dialog.alert({message: error instanceof Error ? error.message : String(error)});
+            return;
+        }
+
         /* const loginScriptLoop = `const inputUsername = document.getElementById(\"login\"); const inputPassword = document.getElementById(\"password\"); const inputSubmit = document.querySelector(\"button[type='submit']\"); if (!inputUsername || !inputPassword || !inputSubmit) { return; } inputUsername.value = \"${matchingApp.username}\"; inputPassword.value = \"${matchingApp.password}\"; inputSubmit.click();`; */
 
         // Escape credentials for safe injection into JS template literal
@@ -516,9 +526,27 @@ export class ApplicationsComponent extends EnhancedComponent {
         });
     }
 
+    /** Chat posts and files of the application not sent yet (the outbox's and the drafts'); 0 each when it cannot be told. */
+    private async unsentChat(appID: ApplicationID): Promise<{ posts: number; files: number }> {
+        try {
+            const app = await this.appService.getMatch(appID);
+            if (!app.database) return { posts: 0, files: 0 };
+            const configId = syncConfigIdFor(app.url, app.username, app.database);
+            const { queue, repo } = this.syncService.chat;
+            const files = (await queue.pendingUploadCount(configId)) + (await repo.draftFileCount(configId));
+            return { posts: await queue.pendingPostCount(configId), files };
+        } catch {
+            return { posts: 0, files: 0 };
+        }
+    }
+
     async deleteApplication(appID: ApplicationID) {
+        // The application's chat goes with it: posts and files still waiting are announced
+        const unsent = await this.unsentChat(appID);
         const deleteConfirmed = confirm(
             this.t("dialog.confirm_delete_app", { url: appID.url, username: appID.username })
+            + (unsent.posts > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat", { count: unsent.posts }) : "")
+            + (unsent.files > 0 ? "\n\n" + this.t("dialog.confirm_delete_app_chat_files", { count: unsent.files }) : "")
         );
 
         if (!deleteConfirmed) {

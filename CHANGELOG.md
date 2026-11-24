@@ -8,6 +8,130 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Chat with Odoo 18 Discuss, lot 1** — a Chat tile on the home page, with
+  its unread count, opens the list of conversations of every Odoo 18 server
+  of the app (filter by server, search, direct chats, groups and channels).
+  A conversation shows its history by pages (or all of it at once), who is
+  typing, who is online, and what became of each message: sending, sent,
+  seen by everyone, not sent. Messages arrive at once through the server's
+  websocket, which reconnects by itself and reloads what it cannot replay.
+  A message written offline waits in a queue, in order, and a post whose
+  answer was lost is found again by a hidden marker in its body instead of
+  being posted twice; with the optional `erplibre_mobile_chat` server
+  module, installed from « Edit an application » by a system user, the
+  server recognises it too. Options › Chat turns off the read receipts and
+  the typing indicator sent to the server.
+- **Chat, lot 2: new conversations and management** — a New conversation
+  screen starts a direct message (people found by name, the recent ones
+  first), a group, or a channel restricted to an access group or open to
+  everyone, and lists the public channels to join. Everything is made
+  offline: the conversation appears at once, waits in the queue, and takes
+  its server identity when the network returns; a create whose answer was
+  lost is found again instead of made twice (by an identifier the server
+  module stores, or, without it, by the conversation's fingerprint), and a
+  refusal leaves the conversation marked failed until dismissed. The info
+  screen lists the members by pages, adds people, renames a group or channel
+  (or a chat, for oneself), edits the description, mutes the conversation
+  from 15 minutes to a day, or for good, leaves it, and, for an administrator,
+  removes a member. A direct message hidden on the server stays hidden and
+  shows again when the other person writes. Options › Chat mutes the whole
+  account per server. The server module 1.1 is detected: an older module is
+  offered an upgrade (to a system user), and removal needs it. The thread
+  and info screens now load their styles, and a guard checks that every
+  sheet reachable from the entry is covered.
+- **Chat, lot 3: files and voice** — a message carries photos, files and
+  voice messages. The composer takes a camera shot (the original, kept), a
+  gallery pick or any file; a HEIC photo becomes a JPEG, and a photo can be
+  compressed (1920 px, JPEG quality 80) when the user asks. A voice message
+  is recorded with a tap to start and a tap to stop (60 seconds at most) and
+  encoded as MP3, mono, 128 kbit/s. The text and the files of a conversation
+  are kept as a draft per conversation, across restarts, and the list shows a
+  « Draft: » line for it. A message with files shows at once, with a
+  « Preparing the photos… » line while they are compressed. The files go to the
+  server one by one, streamed, in a queue lane of their own; a transfer whose
+  answer was lost is not made twice (with the server module 1.2, which
+  recognises the upload by its identifier, or, without it, by a search before
+  the retry), a file over the server's limit is refused with a notice, and
+  files wait for Wi-Fi when the option asks. The thread shows previews, the
+  viewer opens a photo, the player plays a voice message, and « open with »
+  hands a file to another app. Options › Chat sets the compression question,
+  the cache space, a purge of the oldest-opened files (off by default, 2048
+  MB, warned at 80 %) and clears the cache; a conversation's information screen
+  shows its own space and clears it. Deleting an application counts the
+  messages and the files not sent yet. The app bundles the MP3 encoder
+  @breezystack/lamejs, licensed LGPL-3.0: Options › Third-party licenses
+  names it, links its source and reproduces the licence text.
+- **Chat, lot 4: actions and writing** — a long press on a message opens a
+  menu: a bar of six reactions (👍 ❤️ 😂 😮 😢 🙏 at first, then the ones the
+  user reacts with most), a button for the full emoji picker, Reply, Copy
+  (the whole message), and, on one's own messages, Edit and Delete. Reactions
+  show as chips under the message; a tap adds or removes one's own, a long
+  press lists who reacted. Everything queues offline and is never applied
+  twice: a reaction is sent as an explicit add or remove, one added then
+  removed before it left sends nothing, and an edit or a delete whose answer
+  was lost counts as done when the server shows it. A reply shows a quote
+  of the original, which a tap scrolls to; an edited message shows « (modifié) »;
+  a deleted one disappears, and a reply quoting it says the original is
+  deleted. An edit is refused rather than overwriting a message changed or
+  deleted in the browser meanwhile (with the server module 1.3 the server
+  compares the body it holds; without it the app re-reads the message just
+  before sending), and the refused text stays one tap away under « Reprendre ».
+  The composer writes what the browser composer writes: line breaks, links,
+  emoji shortcodes, and @people and #channels picked from suggestions (the
+  people and channels the phone knows, then the server's), with @everyone;
+  a reply, an edit in progress and the picks are kept in the draft of the
+  conversation. The emoji picker has search, categories and recent emoji;
+  its names, keywords and shortcodes come from Odoo 18's `web` module
+  (LGPL-3.0), converted once into an asset loaded when the picker opens, and
+  they are Unicode CLDR data under the Unicode-DFS-2016 licence: Options ›
+  Third-party licenses names both and reproduces the Unicode text, the
+  authors' sentence in the language of the app. Migrations 2026102607
+  (reactions, replies, recipients) and 2026102608 (reply, edit and mentions
+  of the draft). The test kit is at `HARNESS_API` 4 and the device hook at
+  `DEVICE_HOOK_API` 5.
+- **Chat, lot 5: finding things and the inbox** — conversations kept on top
+  stay at the top of the list; Options › Chat › « Ordre de la liste » chooses
+  « Épinglées d'abord » (the default) or « Non lues d'abord ». The search box of
+  the list now looks through messages, people, conversations, file names, the
+  inbox and the starred messages on the phone, even offline (an index on the phone
+  where its database allows it, a plain scan otherwise), then asks the server
+  for more when online, in the conversations the user belongs to only, without
+  marking anything read; a result opens its conversation at the message. A
+  message can be pinned or unpinned from its menu, and « Messages épinglés » in
+  the conversation's menu lists them; a pin notice links to the message. A
+  message can be starred (Favori), and the list has a Favoris box. The new
+  Inbox box brings the mentions, the comments on followed records and the
+  assignments, with its history; « Marquer comme lu » reads one item, « Tout
+  marquer lu » those shown, and an item opens its conversation at the message,
+  the record's note in the app, or the record's page. A reply in a record's
+  chatter takes text, photos, files, voice and mentions, is an internal note
+  unless one confirms « Envoyer comme message aux abonnés », and waits offline
+  like any message. A user whose Odoo notifies by email, who therefore has an
+  empty inbox, is told why and can switch to « Recevoir mes notifications dans
+  Odoo » with one tap (online). Needs the server module 1.4 to be fully safe
+  against doubles; without it the app falls back to searching before it
+  sends. Migrations 2026102701 to 2026102704; the test kit is at `HARNESS_API`
+  5 and the device hook at `DEVICE_HOOK_API` 6.
+- **Chat: authors on bubbles** — in groups and channels, other people's
+  messages show the author's name above the bubble and their avatar to its
+  left, once per run of messages as the Odoo web client does; own messages,
+  direct chats and system lines show neither. Avatars are fetched when the
+  author is on screen, kept on the phone per account (counted and cleared with
+  the chat cache), and initials stand in while they load or offline. Migration
+  2026102705.
+- **Sync test entry points** — `src/testing/syncTestKit.ts` (versioned by
+  `HARNESS_API`) sets the sync code up for ERPLibre's integration tests
+  against real Odoo servers; a development build also exposes
+  `window.__erplibreTest` to its device tests, and `-PsyncTest` builds the
+  app as `ca.erplibre.home.synctest`, beside the user's own.
+- **Chat notifications test door** — the `-PsyncTest` build alone carries
+  `ChatTestDoor` (`android/app/src/synctest/`), a receiver reachable only by the adb
+  shell, or by an app granted DUMP through `adb pm grant`
+  (`android.permission.DUMP`): it sends the real action or content
+  PendingIntent of the test app's own notification by tag, so ERPLibre's
+  device scenarios act on a notification without touching the shade. The
+  normal and `-PnoChatRealtime` builds carry neither the class nor the
+  manifest entry.
 - **Test bundle** — a third target in Options › Code, after Mobile and
   ERPLibre. 52 display fixtures under 400 KB: PNG in colour, alpha and
   greyscale plus the 1×1 degenerate case, BMP, static and animated GIF,
@@ -56,8 +180,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   captures — from which the signal processor's echo cancellation strips back
   out whatever the device has just played, so quality is poor by
   construction
+- **Chat notifications while the app is closed** — Options › Chat
+  notifications sets, per Odoo 18 server, a link to the user's own ntfy (QR
+  code or pasted, with a second address when Odoo reaches ntfy differently).
+  Odoo publishes an encrypted push to the account's secret topic, the phone
+  decrypts it and draws one notification per conversation; tapping it opens
+  the conversation. Five levels:
+  realtime, realtime on Wi-Fi or charging, every 15 minutes (the default for an
+  install that never chose), every hour, off; the first two keep a permanent
+  connection behind one minimal notification shared with the SMS gateway
+  (its « Passerelle SMS » channel is replaced) and ask Android for the battery
+  exemption. A phone silent longer than the ntfy cache, and an account without
+  ntfy, get one summary per server counted from Odoo's unread counters;
+  nothing is marked read. The lock-screen choice is per server and
+  « Hidden when locked » is guaranteed: when Android hides sensitive content
+  the notification shows « Nouveau message — <server> », and when Android shows
+  all content or the setting cannot be read the notification stays off the lock
+  screen. `-PnoChatRealtime` builds without the permanent service. Works with
+  `erplibre_mobile_chat` 1.4 or without the module; migration 2026102801 adds
+  the table `chat_push`
+- **Chat notification actions** — a chat notification offers « Reply » and
+  « Mark read », and a third button (Android draws three at most): « 👍 »
+  when the newest message has a message id (`erplibre_mobile_chat` 1.5),
+  otherwise « Mute 1 h ». The buttons show in every lock-screen mode,
+  « Never shown » included (the text stays hidden). « Mark read » marks the
+  conversation read in Odoo even with the sending of « read » turned off, and
+  clears that conversation's @mentions up to that message from the Odoo Inbox.
+  Every action is sealed in a local store before any network call and sent
+  once: by the module's client identifier, or, without it, by a search for the
+  hidden marker after a 3-minute quiet window; a network failure is retried
+  with a growing delay and the action goes to the app after 24 hours, a
+  refusal, two marker hits or a dead session. A dead session is detected
+  before each action (Odoo answers « mark read » with success and does
+  nothing); the phone then shows one notification per server, « Ouvrez l'app
+  pour terminer une action — {server} », because Android forbids opening the
+  app from a background action, and the app sends the action once at its
+  next start. An action that cannot be recorded shows « Action non envoyée —
+  {server} ». Module 1.5 marks the app's devices (their pushes carry the
+  message id and channel type, go out after commit and log nothing) and adds
+  the « read » and « inbox done » pushes that remove a notification at once
+  when it is read or done elsewhere.
+- **Chat notification preferences** — Odoo's own notification settings are
+  changed from the app: « Channels (Odoo's setting) » per server in Options ›
+  Chat (written false for « mentions », channels only, as Odoo applies it) and
+  « This channel (Odoo's setting) » in a channel's info screen, sent by the
+  queue and followed from the browser on the bus. Per server, a phone filter
+  (« Everything Odoo sends », « Mentions and direct messages », « Nothing from
+  this server »), the inbox switch, which silences record mentions too unless
+  « Ring anyway when I am mentioned in a record » is on, and quiet hours that
+  post silently, never drop, and may cross midnight. For the whole phone, the
+  browser-active choice (« Ring at once », « Wait 10 s » by default, « Do not
+  send to the phone »; a held message survives the process and is dropped
+  when read in the browser) and « Save battery automatically »: one or two
+  levels more under thresholds (30 % and 15 % by default), never past level 4,
+  level 3 at least under battery saver, back to the chosen level once plugged,
+  a climb released only 5 points above its threshold (a wavering gauge climbs
+  once, and the last climb survives the process), with « Right now: level {level} ({why}) » in the options. Levels 1 and 2 ask
+  for the battery exemption through Android's dialog, and the options say
+  when Android refuses it. The status panel counts « Held messages lost:
+  {n} ». `erplibre_mobile_chat` 1.6 adds the mention and browser flags, and
+  an install or upgrade from the app tells the server at once; without it the
+  filter lets channel messages through and « Wait 10 s » rings at once, and
+  with 1.5 « Do not send to the phone » only works in about the minute after
+  the browser opens. Migration 2026103001 adds
+  the preference columns of `chat_push` and `chat_sources`;
+  `doc/GOOGLE_PLAY.md` writes down the Play justifications and gaps
 
 ### Changed
+- **The app's own read bounds its Inbox clear** — marking a conversation
+  read cleared every @mention of that conversation from the Odoo Inbox,
+  including one that arrived after the message read; it now clears only the
+  mentions up to the message read, as « Mark read » in a notification does
 - **Gettext catalogues leave the bundle** — 41 763 files and 857 MB, 33.5 %
   of the files and 58.7 % of the payload, against 603 MB for everything
   else. Weblate and the OCA bots maintain them and nobody reads a catalogue
@@ -67,6 +260,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   having: 41 763 fewer files takes the build from 43 s to 22 s
 
 ### Fixed
+- **The inbox gets the comment a load overtook** — when a load of the inbox
+  came between the announcement of a followed record's comment and its
+  delivery, the delivery was taken for a replay and wrote nothing: of two
+  comments, only the second showed. Such a delivery now re-reads the first
+  page of the inbox.
 - **The interface comes back after every restart** — one launch in two left the
   application on its starting screen: JavaScript ran to the end, the main thread
   sat idle in its loop, and nothing was ever painted. `launchAutoHide: false`

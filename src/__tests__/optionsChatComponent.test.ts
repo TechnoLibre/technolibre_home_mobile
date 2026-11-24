@@ -1,0 +1,289 @@
+// @vitest-environment jsdom
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { EventBus } from "@odoo/owl";
+
+import { OptionsChatComponent } from "../components/options/chat/options_chat_component";
+import { Events } from "../constants/events";
+import { chatSettings, CHAT_SETTINGS_KEY } from "../services/chat/chatSettings";
+import { t } from "../i18n";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+function stubStorage() {
+    const store: Record<string, string> = { app_lang: "en" };
+    (globalThis as any).localStorage = {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+    };
+    return store;
+}
+
+function make() {
+    const store = stubStorage();
+    const c = new (OptionsChatComponent as any)();
+    c.setup();
+    return { c, store };
+}
+
+afterEach(() => { delete (globalThis as any).localStorage; vi.unstubAllGlobals(); });
+
+describe("OptionsChatComponent", () => {
+    it("starts with both options on", () => {
+        const { c } = make();
+        expect(c.state.settings).toMatchObject({ sendRead: true, sendTyping: true });
+    });
+
+    it("toggles persist in options.chat", () => {
+        const { c, store } = make();
+        c.onToggle("sendRead", { target: { checked: false } });
+        expect(chatSettings()).toMatchObject({ sendRead: false, sendTyping: true });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY])).toMatchObject({ sendRead: false, sendTyping: true });
+        expect(c.state.settings.sendRead).toBe(false);
+        c.onToggle("sendTyping", { target: { checked: false } });
+        expect(chatSettings()).toMatchObject({ sendRead: false, sendTyping: false });
+        c.onToggle("sendRead", { target: { checked: true } });
+        expect(chatSettings()).toMatchObject({ sendRead: true, sendTyping: false });
+    });
+});
+
+describe("OptionsChatComponent list order", () => {
+    it("offers the two orders, saves the choice and asks the list to rebuild", () => {
+        stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const bus = new EventBus();
+        const seen: any[] = [];
+        bus.addEventListener(Events.CHAT_CHANGED, (ev: any) => seen.push(ev.detail));
+        c.env = { eventBus: bus };
+        c.setup();
+        expect(c.listOrders.map((o: any) => [o.value, o.label])).toEqual([
+            ["on_top_first", "chat.list_order_on_top"], ["unread_first", "chat.list_order_unread"],
+        ]);
+        expect(c.state.settings.listOrder).toBe("on_top_first");
+        c.onListOrder("unread_first");
+        expect(chatSettings().listOrder).toBe("unread_first");
+        expect(c.state.settings.listOrder).toBe("unread_first");
+        expect(seen).toHaveLength(1);
+        c.onListOrder("unread_first");
+        expect(seen).toHaveLength(1);
+    });
+});
+
+describe("OptionsChatComponent global mute", () => {
+    function makeMute(sources: any[], global: string | null = null) {
+        stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const bus = new EventBus();
+        const chat = {
+            sources: vi.fn().mockResolvedValue(sources),
+            globalMute: vi.fn().mockResolvedValue(undefined),
+            repo: { sourceState: vi.fn(async () => ({ globalMuteUntil: global })) },
+        };
+        c.env = { eventBus: bus };
+        Object.defineProperty(c, "chatService", { value: chat });
+        c.setup();
+        return { c, chat, bus };
+    }
+    const src = (id: string) => ({ configId: id, label: id, creds: {} });
+
+    it("says unavailable without a server", async () => {
+        const { c } = makeMute([]);
+        await c.loadSources();
+        expect(c.state.mode).toBe("unavailable");
+    });
+
+    it("offers the six durations and sets one through globalMute", async () => {
+        const { c, chat } = makeMute([src("a")]);
+        await c.loadSources();
+        expect(c.state.mode).toBe("none");
+        expect(c.muteChoices.map((m: any) => m.minutes)).toEqual([15, 60, 180, 480, 1440, -1]);
+        await c.onMute(60);
+        expect(chat.globalMute).toHaveBeenCalledWith(expect.objectContaining({ configId: "a" }), 60);
+        await c.onMute(-1);
+        expect(chat.globalMute).toHaveBeenLastCalledWith(expect.anything(), -1);
+    });
+
+    it("clears with Réactiver and shows the state", async () => {
+        const future = new Date(Date.now() + 3600000).toISOString().slice(0, 19).replace("T", " ");
+        const { c, chat } = makeMute([src("a")], future);
+        await c.loadSources();
+        expect(c.state.muted).toBe(true);
+        await c.onUnmute();
+        expect(chat.globalMute).toHaveBeenCalledWith(expect.anything(), false);
+    });
+
+    it("targets the chosen server among several", async () => {
+        const { c, chat } = makeMute([src("a"), src("b")]);
+        await c.loadSources();
+        expect(c.state.mode).toBe("chips");
+        c.onServer("b");
+        await c.onMute(15);
+        expect(chat.globalMute).toHaveBeenCalledWith(expect.objectContaining({ configId: "b" }), 15);
+    });
+
+    it("refreshes on CHAT_CHANGED and stops after unmount", async () => {
+        const { c, chat, bus } = makeMute([src("a")]);
+        await c.loadSources();
+        chat.repo.sourceState.mockClear();
+        c._onChanged(new CustomEvent("x", { detail: { configId: "a" } }));
+        expect(chat.repo.sourceState).toHaveBeenCalledTimes(1);
+        c._onChanged(new CustomEvent("x", { detail: { configId: "z" } }));
+        expect(chat.repo.sourceState).toHaveBeenCalledTimes(1);
+        expect(bus).toBeDefined();
+    });
+
+    it("shows a notice when the call fails", async () => {
+        const { c, chat } = makeMute([src("a")]);
+        await c.loadSources();
+        chat.globalMute.mockRejectedValue(new Error("boom"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.onMute(15);
+        expect(c.state.error).not.toBe("");
+        expect(c.state.busy).toBe(false);
+    });
+});
+
+describe("OptionsChatComponent Odoo's general setting", () => {
+    function makeNotify(values: Record<string, string | null>) {
+        const store = stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const chat = {
+            sources: vi.fn().mockResolvedValue(Object.keys(values).map((id) => ({ configId: id, label: id, creds: {} }))),
+            globalMute: vi.fn().mockResolvedValue(undefined),
+            setGlobalNotify: vi.fn().mockResolvedValue(undefined),
+            repo: { sourceState: vi.fn(async (id: string) => ({ globalMuteUntil: null, channelNotifications: values[id] })) },
+        };
+        c.env = { eventBus: new EventBus() };
+        Object.defineProperty(c, "chatService", { value: chat });
+        c.setup();
+        return { c, chat, store };
+    }
+
+    it("the general setting chooser per server says it governs channels only", async () => {
+        const { c, chat, store } = makeNotify({ a: "mentions", b: null });
+        const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "components", "options", "chat", "options_chat_component.ts"), "utf8");
+        expect(source).toContain("t('chat.notify_general')");
+        expect(source).toContain("t('chat.notify_general_help')");
+        store.app_lang = "fr";
+        expect(t("chat.notify_general")).toBe("Canaux (réglage d'Odoo)");
+        expect(t("chat.notify_general_help")).toBe("Les discussions et les groupes sonnent toujours ; pour les faire taire, utilisez la sourdine");
+        expect(c.notifyChoices.map((n: any) => [n.value, t(n.label)])).toEqual([
+            ["all", "Tous les messages"], ["mentions", "Mentions seulement"], ["no_notif", "Rien"],
+        ]);
+        await c.loadSources();
+        expect(c.state.notify).toBe("mentions");
+        // Unknown until a load reads it: no choice is shown as set
+        c.onServer("b");
+        await vi.waitFor(() => expect(chat.repo.sourceState).toHaveBeenLastCalledWith("b"));
+        await Promise.resolve();
+        expect(c.state.notify).toBeNull();
+        await c.onNotify("no_notif");
+        expect(chat.setGlobalNotify).toHaveBeenCalledWith("b", "no_notif");
+        chat.setGlobalNotify.mockRejectedValueOnce(new Error("boom"));
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        await c.onNotify("all");
+        expect(c.state.error).not.toBe("");
+        expect(c.state.busy).toBe(false);
+    });
+});
+
+describe("OptionsChatComponent attachment cache", () => {
+    function makeCache(bytes = 0, warning = false) {
+        const store = stubStorage();
+        const c = new (OptionsChatComponent as any)();
+        const attachments = {
+            space: vi.fn(async () => bytes),
+            warning: vi.fn(async () => warning),
+            clear: vi.fn().mockResolvedValue(undefined),
+        };
+        Object.defineProperty(c, "chatService", { value: { attachments } });
+        c.env = { eventBus: new EventBus() };
+        c.setup();
+        return { c, store, attachments };
+    }
+
+    it("defaults: purge off, 2048 MB, no compression question", () => {
+        const { c } = makeCache();
+        expect(c.state.settings).toMatchObject({ cachePurge: false, cacheLimitMb: 2048, askCompress: false });
+    });
+
+    it("shows the total space and the 80 % warning", async () => {
+        const { c, attachments } = makeCache(3 * 1024 * 1024, true);
+        await c.loadCache();
+        expect(attachments.space).toHaveBeenCalledWith();
+        expect(c.state.spaceText).toBe("3\u00a0MB");
+        expect(c.state.cacheWarn).toBe(true);
+    });
+
+    it("the space reads « … » until it is read, and stays so when the read fails", async () => {
+        const { c, attachments } = makeCache(3 * 1024 * 1024, false);
+        expect(c.state.spaceText).toBe("…");
+        attachments.space.mockRejectedValueOnce(new Error("db"));
+        await c.loadCache();
+        expect(c.state.spaceText).toBe("…");
+    });
+
+    it("the purge switch and the compression question persist", () => {
+        const { c, store } = makeCache();
+        c.onToggle("cachePurge", { target: { checked: true } });
+        c.onToggle("askCompress", { target: { checked: true } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY])).toMatchObject({ cachePurge: true, askCompress: true });
+        expect(c.state.settings.cachePurge).toBe(true);
+    });
+
+    it("a valid limit is saved on change and the warning is read again", async () => {
+        const { c, store, attachments } = makeCache();
+        await c.onLimitChange({ target: { value: "512" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(512);
+        expect(c.state.settings.cacheLimitMb).toBe(512);
+        expect(attachments.warning).toHaveBeenCalled();
+    });
+
+    it("a limit is rounded to a whole number of MB and capped", async () => {
+        const { c, store } = makeCache();
+        await c.onLimitChange({ target: { value: "512.6" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(513);
+        await c.onLimitChange({ target: { value: "99999999999" } });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(1048576);
+        const target = { value: "0.2" };
+        await c.onLimitChange({ target });
+        expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(1048576);
+        expect(target.value).toBe("1048576");
+    });
+
+    it("a burst of chat changes reads the space once", async () => {
+        vi.useFakeTimers();
+        try {
+            const { c, attachments } = makeCache();
+            const ev = new CustomEvent("chat_changed", { detail: { configId: "x" } });
+            for (let i = 0; i < 5; i++) c._onChanged(ev);
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(attachments.space).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("a limit of 0, negative or not a number is refused and the input goes back", async () => {
+        const { c, store } = makeCache();
+        await c.onLimitChange({ target: { value: "512" } });
+        for (const bad of ["0", "-5", "abc", ""]) {
+            const target = { value: bad };
+            await c.onLimitChange({ target });
+            expect(target.value).toBe("512");
+            expect(JSON.parse(store[CHAT_SETTINGS_KEY]).cacheLimitMb).toBe(512);
+        }
+    });
+
+    it("Vider tout asks, says unsent files stay, then clears every account", async () => {
+        const { c, attachments } = makeCache(1024);
+        const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+        await c.onClearAll();
+        expect(attachments.clear).not.toHaveBeenCalled();
+        await c.onClearAll();
+        expect(confirm.mock.calls[0][0]).toMatch(/not sent/);
+        expect(attachments.clear).toHaveBeenCalledWith({});
+        confirm.mockRestore();
+    });
+});

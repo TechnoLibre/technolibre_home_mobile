@@ -1473,16 +1473,72 @@ export const FEATURE_TREE: FeatureNode[] = [
                 permissions: ["internet"],
                 tests: ["src/__tests__/syncService.test.ts"],
                 howItWorks: {
-                    en: "Each note tracks (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) plus a multi-server "
-                        + "selection. Pull diffs are merged client-side using "
-                        + "last-modified-wins per field; conflicts surface in "
-                        + "the UI for explicit resolution.",
-                    fr: "Chaque note stocke (odoo_id, sync_status, "
-                        + "last_synced_at, sync_config_id) + sélection "
-                        + "multi-serveurs. Les diffs pull sont mergés client "
-                        + "en last-modified-wins par champ ; les conflits "
-                        + "remontent en UI pour résolution explicite.",
+                    en: "A note is bound to one project.task per sync target "
+                        + "(url|username|database) through note_links: push writes that "
+                        + "server's own task or creates and links one (one push "
+                        + "at a time per note and server). sync_per_server_status "
+                        + "holds synced / error / pending per server; the note's "
+                        + "sync_status is derived from the live applications' "
+                        + "entries (error, then pending, then synced). "
+                        + "syncAll(config) pushes the notes pending or in error "
+                        + "for that server, so a note queued offline, or whose "
+                        + "push failed, leaves on the next sync; a failed "
+                        + "creation first waits out its retry delay (30 s "
+                        + "doubling to one hour), which a reconnect ignores. "
+                        + "Pull pages "
+                        + "through the tasks written since a per-server cursor, "
+                        + "archived ones included, and copies title, pinned, "
+                        + "archived and (Odoo 17+) done onto linked notes, except "
+                        + "notes still pending or in error for that server; a note "
+                        + "it changes is queued for its other servers, synced "
+                        + "again in the same run (a tap, a resume) when already "
+                        + "done; a note changed during its push (an edit, a pull) "
+                        + "is pushed again at once. A task deleted "
+                        + "on the server marks its link deleted and is recreated "
+                        + "only when the user confirms. Creating a note's task "
+                        + "runs as its task.create outbox operation: the task "
+                        + "carries the operation's erplibre-mobile:<uuid> marker, "
+                        + "and a retry searches it first so a create whose answer "
+                        + "was lost is adopted instead of duplicated; several "
+                        + "matches (a copy made on the server keeps the marker) "
+                        + "block it until the user picks the task to link. A "
+                        + "retry waits three minutes after the last create sent, "
+                        + "so a create the server is still running has committed "
+                        + "before the search looks for it.",
+                    fr: "Une note est liée à une project.task par cible de sync "
+                        + "(url|username|base) via note_links : le push écrit la tâche de CE "
+                        + "serveur ou en crée une et la lie (un seul push à la "
+                        + "fois par note et serveur). sync_per_server_status porte "
+                        + "synced / error / pending par serveur ; le sync_status "
+                        + "de la note en est déduit sur les applications encore "
+                        + "présentes (error, puis pending, puis synced). "
+                        + "syncAll(config) pousse les notes en attente ou en "
+                        + "erreur pour ce serveur : une note mise en attente hors "
+                        + "ligne, ou dont le push a échoué, part à la sync "
+                        + "suivante ; une création en échec attend d'abord son "
+                        + "délai (30 s doublées jusqu'à une heure), qu'un retour "
+                        + "du réseau ignore. Le pull parcourt par pages les tâches écrites "
+                        + "depuis un curseur par serveur, archivées comprises, et "
+                        + "recopie titre, épinglage, archivage et (Odoo 17+) fait "
+                        + "sur les notes liées, sauf celles encore en attente ou "
+                        + "en erreur pour ce serveur ; une note qu'il modifie est "
+                        + "mise en attente pour ses autres serveurs, resynchronisés "
+                        + "dans le même passage (un tap, une reprise) s'ils étaient "
+                        + "déjà faits ; une note changée pendant son push (une "
+                        + "édition, un pull) est renvoyée aussitôt. Une tâche "
+                        + "supprimée sur le serveur marque son lien supprimé et "
+                        + "n'est recréée que si l'utilisateur confirme. La "
+                        + "création de la tâche d'une note passe par son opération "
+                        + "task.create de la file : la tâche porte le marqueur "
+                        + "erplibre-mobile:<uuid> de l'opération, et une reprise le "
+                        + "cherche d'abord, si bien qu'un create dont la réponse "
+                        + "s'est perdue est repris au lieu d'être dupliqué ; "
+                        + "plusieurs résultats (une copie faite sur le serveur "
+                        + "garde le marqueur) le bloquent jusqu'à ce que "
+                        + "l'utilisateur choisisse la tâche à lier. Une reprise "
+                        + "attend trois minutes après le dernier create envoyé, "
+                        + "pour qu'un create encore en cours sur le serveur soit "
+                        + "validé avant que la recherche ne le cherche.",
                 },
                 dependsOn: ["deployment.applications"],
                 demo: NONE_BG,
@@ -1490,6 +1546,574 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/syncService.ts",
                     "src/models/syncConfig.ts",
                 ],
+            },
+            {
+                id: "sync.odoo-rpc",
+                label: { en: "Odoo RPC client and probes", fr: "Client RPC Odoo et sondes" },
+                description: {
+                    en: "JSON-RPC session, typed calls, cached per-server model probes.",
+                    fr: "Session JSON-RPC, appels typés, sondes de modèles en cache par serveur.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/odooRpcClient.test.ts", "src/__tests__/capabilityService.test.ts"],
+                howItWorks: {
+                    en: "OdooRpcClient talks to Odoo 16 to 18 through the standard routes "
+                        + "only (session/authenticate, dataset/call_kw), keeps one session per "
+                        + "url, user and database and re-authenticates once on code 100 or HTTP "
+                        + "401. Helpers: searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access on 18, check_access_rights otherwise; null "
+                        + "when neither answers) and messagePost. CapabilityService probes a "
+                        + "model with fields_get (an unknown model answers KeyError), the three rights "
+                        + "and activity_ids / message_ids, never ir.model, and caches the "
+                        + "answer in server_capabilities for offline checks; ensure() probes "
+                        + "again after a day when online.",
+                    fr: "OdooRpcClient parle à Odoo 16 à 18 par les seules routes standard "
+                        + "(session/authenticate, dataset/call_kw), garde une session par url, "
+                        + "utilisateur et base, et se reconnecte une fois sur le code 100 ou un "
+                        + "HTTP 401. Aides : searchRead, nameSearch, fieldsGet, defaultGet, "
+                        + "checkAccess (has_access en 18, check_access_rights sinon ; null si "
+                        + "aucun ne répond) et messagePost. CapabilityService sonde un modèle "
+                        + "par fields_get (un modèle inconnu répond KeyError), les trois droits et "
+                        + "activity_ids / message_ids, jamais ir.model, et garde la réponse "
+                        + "dans server_capabilities pour valider hors ligne ; ensure() sonde "
+                        + "de nouveau après un jour quand le réseau est là.",
+                },
+                dependsOn: ["deployment.applications"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/odoo/odooRpcClient.ts",
+                    "src/services/odoo/capabilityService.ts",
+                ],
+            },
+            {
+                id: "sync.task-project",
+                label: { en: "Task project", fr: "Projet de la tâche" },
+                description: {
+                    en: "Project of a note's new task, chosen per server, kept offline.",
+                    fr: "Projet de la nouvelle tâche d'une note, choisi par serveur, gardé hors ligne.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/projectService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                ],
+                howItWorks: {
+                    en: "A tap on sync with a server where the note has neither task nor "
+                        + "opportunity, or where a creation waits for a choice, opens the "
+                        + "picker: per server, the project of the new task, or none (a "
+                        + "personal task), the server's last choice first. ProjectService "
+                        + "lists the active projects online and caches them in "
+                        + "remote_records_cache; when the projects cannot be read (offline, "
+                        + "server failing) the picker offers the cache, plus \"choose later\", "
+                        + "which leaves the creation incomplete until a project is chosen. A "
+                        + "cached probe denying task creation greys the Task box; the server "
+                        + "is greyed only when nothing can be sent there. The "
+                        + "project is set only by create: a task moved on the server stays in "
+                        + "its project, and pull and poll read the linked tasks whatever their "
+                        + "project. A project gone, archived or hidden, or a create the server "
+                        + "refuses, blocks the creation until the next tap chooses again; a "
+                        + "task deleted on the server is recreated in the project the picker "
+                        + "then asks for.",
+                    fr: "Un appui sur sync vers un serveur où la note n'a ni tâche ni "
+                        + "opportunité, ou où une création attend un choix, ouvre le "
+                        + "sélecteur : par serveur, le projet de la nouvelle tâche, ou aucun "
+                        + "(tâche personnelle), le dernier choix du serveur d'abord. "
+                        + "ProjectService liste les projets actifs en ligne et les garde dans "
+                        + "remote_records_cache ; quand les projets sont illisibles (hors "
+                        + "ligne, serveur en échec), le sélecteur propose le cache, plus "
+                        + "« choisir plus tard », qui laisse la création incomplète jusqu'au "
+                        + "choix d'un projet. Une sonde en cache qui refuse la création de "
+                        + "tâches grise la case Tâche ; le serveur n'est grisé que si rien ne "
+                        + "peut y partir. Seul le create pose le projet : une "
+                        + "tâche déplacée sur le serveur reste dans son projet, et pull et poll "
+                        + "lisent les tâches liées quel que soit leur projet. Un projet "
+                        + "disparu, archivé ou caché, ou un create refusé, bloque la création "
+                        + "jusqu'au prochain appui, qui fait choisir de nouveau ; une tâche "
+                        + "supprimée sur le serveur est recréée dans le projet que le "
+                        + "sélecteur demande alors.",
+                },
+                dependsOn: ["sync.service", "sync.outbox", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/odoo/projectService.ts",
+                    "src/services/targetPicker.ts",
+                    "src/components/note/note_component.ts",
+                ],
+            },
+            {
+                id: "sync.lead",
+                label: { en: "Opportunity target", fr: "Cible opportunité" },
+                description: {
+                    en: "Send a note as a CRM opportunity, beside or instead of a task.",
+                    fr: "Envoyer une note comme opportunité CRM, à côté ou à la place d'une tâche.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/recordSearchService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker shows, per server, a Task and an Opportunity box, "
+                        + "checkable together; the server's last checked kinds are the "
+                        + "default for a note with nothing there. An opportunity is a "
+                        + "crm.lead created with type opportunity, the note's title, "
+                        + "description (with the marker), crm.tag tags, archive state and "
+                        + "first date (day only), plus the client and expected revenue "
+                        + "chosen, which only create sends; done and pinned do not map. "
+                        + "Clients come from name_search, kept in remote_records_cache "
+                        + "(200 per server) for offline search. A client gone or hidden "
+                        + "blocks the creation until chosen again; the CRM missing or no "
+                        + "create right greys the box. Unchecking a kind that waited (blocked, "
+                        + "left for later, deleted on the server) drops it: its creation is "
+                        + "cancelled and its deleted link dismissed. Each kind is pushed on "
+                        + "its own: one waiting for a choice never holds back the other's "
+                        + "writes.",
+                    fr: "Le sélecteur montre, par serveur, une case Tâche et une case "
+                        + "Opportunité, cochables ensemble ; les derniers types cochés du "
+                        + "serveur sont le défaut d'une note qui n'y a rien. Une opportunité "
+                        + "est un crm.lead créé avec le type opportunity, le titre, la "
+                        + "description (avec le marqueur), les étiquettes crm.tag, "
+                        + "l'archivage et la première date (le jour) de la note, plus le "
+                        + "client et le revenu attendu choisis, que seul le create envoie ; "
+                        + "fait et épinglée ne se traduisent pas. Les clients viennent de "
+                        + "name_search, gardés dans remote_records_cache (200 par serveur) "
+                        + "pour chercher hors ligne. Un client disparu ou caché bloque la "
+                        + "création jusqu'à un nouveau choix ; un CRM absent ou sans droit de "
+                        + "création grise la case. Décocher un type qui attendait (bloqué, "
+                        + "laissé pour plus tard, supprimé sur le serveur) l'abandonne : sa "
+                        + "création est annulée et son lien supprimé écarté. Chaque type part "
+                        + "seul : celui qui attend un choix ne retient pas les écritures de "
+                        + "l'autre.",
+                },
+                dependsOn: ["sync.task-project", "sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/recordSearchService.ts"],
+            },
+            {
+                id: "sync.activity",
+                label: { en: "Activity target", fr: "Cible activité" },
+                description: {
+                    en: "Schedule activities from a note on any record of a server.",
+                    fr: "Planifier des activités depuis une note sur n'importe quel record d'un serveur.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/activityPicker.test.ts",
+                    "src/__tests__/activityTypeService.test.ts",
+                ],
+                howItWorks: {
+                    en: "The picker lists, per server, the note's activities and adds new "
+                        + "ones: a model from a fixed list probed for activity_ids (or a "
+                        + "technical name), a record found by name_search (the note's own task "
+                        + "or opportunity first), a type from mail.activity.type, a due date "
+                        + "(the note's date, else today plus the type's delay) and a user "
+                        + "(the connected one by default). A note can have several per server, "
+                        + "each its own activity.create row in the outbox and its own "
+                        + "note_links row (kind activity, choices in params_json). The create "
+                        + "passes default_res_model in the context, so no ir.model read is "
+                        + "needed; the record, type and user are checked first. Later pushes "
+                        + "write summary and note; a done note calls action_feedback and the "
+                        + "link turns done. An activity gone on the server is kept as history.",
+                    fr: "Le sélecteur liste, par serveur, les activités de la note et en "
+                        + "ajoute : un modèle d'une liste fixe sondée sur activity_ids (ou un "
+                        + "nom technique), un record trouvé par name_search (la tâche ou "
+                        + "l'opportunité de la note d'abord), un type de mail.activity.type, "
+                        + "une échéance (la date de la note, sinon aujourd'hui plus le délai "
+                        + "du type) et un utilisateur (celui connecté par défaut). Une note peut "
+                        + "en avoir plusieurs par serveur, chacune avec sa ligne "
+                        + "activity.create dans la file et sa ligne note_links (type activity, "
+                        + "choix dans params_json). Le create passe default_res_model dans le "
+                        + "contexte : aucune lecture d'ir.model. Le record, le type et "
+                        + "l'utilisateur sont vérifiés avant. Les envois suivants écrivent "
+                        + "summary et note ; une note faite appelle action_feedback et le lien "
+                        + "passe à fait. Une activité disparue du serveur reste en historique.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/activityTypeService.ts"],
+            },
+            {
+                id: "sync.message",
+                label: { en: "Message in a thread", fr: "Message dans un fil" },
+                description: {
+                    en: "Post a note as a logged note in any record's chatter, kept up to date.",
+                    fr: "Poster une note comme note interne dans le fil de n'importe quel record, tenue à jour.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts", "src/__tests__/activityPicker.test.ts"],
+                howItWorks: {
+                    en: "Beside activities, the picker's section posts the note in the chatter "
+                        + "of a record (same models, probed for message_ids, or a technical "
+                        + "name). Each message is its own message.post row in the outbox and "
+                        + "note_links row (kind message): message_post as a logged note "
+                        + "(mt_note), the title in bold, the text, the marker. A later change "
+                        + "of the text edits the message through /mail/message/update_content, "
+                        + "the web client's own edit route (Odoo 16 to 18); the hash of the "
+                        + "body last sent spares an edit when nothing changed. A message gone "
+                        + "on the server is kept as history.",
+                    fr: "À côté des activités, la section du sélecteur poste la note dans le "
+                        + "fil d'un record (mêmes modèles, sondés sur message_ids, ou un nom "
+                        + "technique). Chaque message a sa ligne message.post dans la file et "
+                        + "sa ligne note_links (type message) : message_post en note interne "
+                        + "(mt_note), le titre en gras, le texte, le marqueur. Un changement "
+                        + "du texte édite ensuite le message par /mail/message/update_content, "
+                        + "la route d'édition du client web (Odoo 16 à 18) ; l'empreinte du "
+                        + "dernier corps envoyé évite une édition quand rien n'a changé. Un "
+                        + "message disparu du serveur reste en historique.",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/activityPicker.ts", "src/services/odoo/odooRpcClient.ts"],
+            },
+            {
+                id: "sync.invoice",
+                label: { en: "Draft invoice target", fr: "Cible brouillon de facture" },
+                description: {
+                    en: "Draft a customer invoice or vendor bill from a note, tied to its task or opportunity.",
+                    fr: "Rédiger une facture client ou fournisseur en brouillon depuis une note, liée à sa tâche ou à son opportunité.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: [
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/targetPicker.test.ts",
+                    "src/__tests__/invoiceForm.test.ts",
+                ],
+                howItWorks: {
+                    en: "A third box of the picker, beside Task and Opportunity: one account.move "
+                        + "per note and server, created as a draft with its type (out_invoice or "
+                        + "in_invoice), partner, date, reference and lines (label, quantity, "
+                        + "price, optional product), the note going to narration with the marker. "
+                        + "The form is dynamic: fields_get (with depends) and default_get name the "
+                        + "required fields the server neither computes nor defaults, asked by "
+                        + "type and kept for offline. The tie to the note's task or opportunity "
+                        + "writes a settable many2one of account.move to it when a module adds "
+                        + "one, else posts a message in each chatter. Later pushes write narration "
+                        + "only.",
+                    fr: "Une troisième case du sélecteur, à côté de Tâche et Opportunité : un "
+                        + "account.move par note et serveur, créé en brouillon avec son type "
+                        + "(out_invoice ou in_invoice), son partenaire, sa date, sa référence et "
+                        + "ses lignes (libellé, quantité, prix, produit facultatif), la note allant "
+                        + "dans narration avec le marqueur. Le formulaire est dynamique : fields_get "
+                        + "(avec depends) et default_get donnent les champs obligatoires que le "
+                        + "serveur ne calcule ni ne remplit par défaut, demandés par type et gardés "
+                        + "hors ligne. Le lien vers la tâche ou l'opportunité de la note écrit un "
+                        + "many2one modifiable d'account.move vers elle quand un module en ajoute "
+                        + "un, sinon poste un message dans chaque fil. Les envois suivants "
+                        + "n'écrivent que narration.",
+                },
+                dependsOn: ["sync.lead", "sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/invoiceForm.ts", "src/services/targetPicker.ts"],
+            },
+            {
+                id: "sync.calendar",
+                label: { en: "Activity calendar", fr: "Calendrier des activités" },
+                description: {
+                    en: "A month of the activities of every server, mine and my team's, with done, reschedule and reminders.",
+                    fr: "Un mois des activités de tous les serveurs, les miennes et celles de l'équipe, avec fait, report et rappels.",
+                },
+                status: "experimental",
+                permissions: ["internet", "notifications"],
+                tests: [
+                    "src/__tests__/activityCalendarService.test.ts",
+                    "src/__tests__/calendarView.test.ts",
+                    "src/__tests__/calendarReminders.test.ts",
+                ],
+                howItWorks: {
+                    en: "Per server, the open mail.activity of the connected user (uid from "
+                        + "get_session_info) and of the users chosen, due up to 90 days ahead, "
+                        + "overdue ones included, plus on Odoo 17+ those done (archived) in the "
+                        + "last 30 days, kept in activities_cache for offline. Team: users "
+                        + "chosen by search, plus the members of the user's crm.team. Mark done "
+                        + "(action_feedback, after an active check on 17+) and reschedule "
+                        + "(date_deadline) apply to the cache at once and wait in the outbox "
+                        + "(calendar.done, calendar.reschedule) when offline. A day's \"New "
+                        + "note\" creates a dated note and opens the sync picker on an activity "
+                        + "due that day. Each refresh, and the app's start from the cache (an "
+                        + "update or a forced stop cancels alarms), reschedules local reminders "
+                        + "of the user's open activities (hour and days before, in the sync options).",
+                    fr: "Par serveur, les mail.activity ouvertes de l'utilisateur connecté (uid "
+                        + "de get_session_info) et des utilisateurs choisis, dues jusqu'à 90 jours, "
+                        + "celles en retard comprises, plus en Odoo 17+ celles faites (archivées) "
+                        + "depuis 30 jours, gardées dans activities_cache hors ligne. Équipe : des "
+                        + "utilisateurs cherchés, plus les membres des crm.team de l'utilisateur. "
+                        + "Marquer faite (action_feedback, après lecture d'active en 17+) et "
+                        + "reporter (date_deadline) s'appliquent au cache aussitôt et attendent "
+                        + "dans la file (calendar.done, calendar.reschedule) hors ligne. « Nouvelle "
+                        + "note » d'un jour crée une note datée et ouvre le sélecteur sur une "
+                        + "activité due ce jour. Chaque rafraîchissement, et le démarrage de "
+                        + "l'app depuis le cache (une mise à jour ou un arrêt forcé annule les "
+                        + "alarmes), replanifie les rappels locaux des activités ouvertes (heure "
+                        + "et jours avant, dans les options).",
+                },
+                dependsOn: ["sync.activity", "sync.outbox"],
+                demo: { kind: "route", url: "/activities" },
+                files: [
+                    "src/components/activities/activity_calendar_component.ts",
+                    "src/components/activities/activity_calendar_component.scss",
+                    "src/services/activityCalendarService.ts",
+                    "src/services/calendarView.ts",
+                    "src/services/calendarReminders.ts",
+                    "src/utils/openRecordInApp.ts",
+                ],
+            },
+            {
+                id: "sync.two-way",
+                label: { en: "Two-way sync and conflicts", fr: "Sync dans les deux sens et conflits" },
+                description: {
+                    en: "Server changes come back into the note, field by field; a field changed on both sides is a conflict the user settles.",
+                    fr: "Les changements du serveur reviennent dans la note, champ par champ ; un champ changé des deux côtés est un conflit que l'utilisateur règle.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/noteMirror.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "Each link keeps a base: the note's and the record's mirrored values "
+                        + "(title, text, tags, date, done, archived, pinned, as each kind has "
+                        + "them) at their last exchange. A pull of tasks, opportunities, invoices "
+                        + "and activities (one cursor per model), and every push before writing, "
+                        + "read the record and merge three ways: a field changed on the server "
+                        + "only goes into the note (the text replacing its text entries), except "
+                        + "the date, which the note screen proposes (update the note, or keep its "
+                        + "date until the server's changes again), one "
+                        + "changed in the app only is written alone, tags as added and removed "
+                        + "(commands 4 and 3) and a task's state only when done changed. A field "
+                        + "changed on both sides puts the server in conflict: nothing is written "
+                        + "until the note's conflict dialog keeps, per field, the app's or the "
+                        + "server's version. The open note's saves and pulled reloads merge "
+                        + "against the note as the screen last knew it: what a pull wrote stays "
+                        + "where the user changed nothing, and keystrokes not saved yet stay.",
+                    fr: "Chaque lien garde une base : les valeurs miroirs de la note et du "
+                        + "record (titre, texte, étiquettes, date, fait, archivée, épinglée, selon "
+                        + "le type) au dernier échange. Le pull des tâches, opportunités, factures "
+                        + "et activités (un curseur par modèle), et chaque envoi avant d'écrire, "
+                        + "lisent le record et fusionnent à trois voies : un champ changé sur le "
+                        + "serveur seulement entre dans la note (le texte remplaçant ses entrées "
+                        + "texte), sauf la date, que l'écran de la note propose (mettre la note à "
+                        + "jour, ou garder sa date jusqu'au prochain changement du serveur), un champ changé dans l'app seulement est écrit seul, les "
+                        + "étiquettes en ajouts et retraits (commandes 4 et 3) et l'état d'une "
+                        + "tâche seulement si fait change. Un champ changé des deux côtés met le "
+                        + "serveur en conflit : rien n'est écrit avant que l'écran de conflit de "
+                        + "la note garde, champ par champ, la version de l'app ou du serveur. Les "
+                        + "sauvegardes et rechargements de la note ouverte fusionnent avec la note "
+                        + "telle que l'écran l'a connue : ce qu'un pull a écrit reste là où "
+                        + "l'utilisateur n'a rien changé, et les frappes pas encore sauvées restent.",
+                },
+                dependsOn: ["sync.task-project", "sync.lead", "sync.invoice", "sync.activity"],
+                demo: NONE_BG,
+                files: ["src/services/noteMirror.ts", "src/services/note/noteEditMerge.ts", "src/components/note/note_component.ts"],
+            },
+            {
+                id: "sync.background-notice",
+                label: { en: "Pending sync notice", fr: "Avis de synchronisation en attente" },
+                description: {
+                    en: "App closed, a notification tells the notes still waiting for Odoo and opens the app.",
+                    fr: "App fermée, une notification signale les notes en attente pour Odoo et ouvre l'app.",
+                },
+                status: "experimental",
+                permissions: ["notifications"],
+                tests: ["src/__tests__/pendingSyncNotice.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "The sync runs only in the app, its logic and encrypted data being in the "
+                        + "web view. Going to the background, the app publishes to the native "
+                        + "NoteSyncPlugin how many notes wait (pending or in error, plus the "
+                        + "calendar's changes) and how many are in conflict, with the texts in its "
+                        + "language. NoteSyncJob, a persisted periodic job (15 minutes, network "
+                        + "required, apart from the SMS gateway's), shows them while the app is "
+                        + "closed; a tap opens the app, whose resume syncs what is due. Coming back "
+                        + "to the foreground clears the notice.",
+                    fr: "La synchronisation ne tourne que dans l'app, sa logique et ses données "
+                        + "chiffrées étant dans la vue web. En passant en arrière-plan, l'app publie "
+                        + "au NoteSyncPlugin natif le nombre de notes en attente (à envoyer ou en "
+                        + "erreur, plus les changements du calendrier) et en conflit, avec les "
+                        + "textes dans sa langue. NoteSyncJob, un travail périodique persistant "
+                        + "(15 minutes, réseau requis, distinct de celui de la passerelle SMS), les "
+                        + "affiche app fermée ; un appui ouvre l'app, dont la reprise synchronise ce "
+                        + "qui est dû. Le retour au premier plan retire l'avis.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: [
+                    "src/services/pendingSyncNotice.ts",
+                    "src/plugins/noteSyncPlugin.ts",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncJob.java",
+                    "android/app/src/main/java/ca/erplibre/home/NoteSyncPlugin.java",
+                ],
+            },
+            {
+                id: "sync.companies",
+                label: { en: "Several companies", fr: "Plusieurs sociétés" },
+                description: {
+                    en: "For a user of several companies, each send chooses the company of the new records.",
+                    fr: "Pour un utilisateur de plusieurs sociétés, chaque envoi choisit la société des nouveaux enregistrements.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "The picker reads the user's companies from get_session_info "
+                        + "(user_companies), kept per server for offline, and shows a choice only "
+                        + "when there are several, the last one chosen first. Every call to that "
+                        + "server is then made in all of them (allowed_company_ids), so records of "
+                        + "each are seen and written; a creation puts the chosen company first, "
+                        + "where the server creates the record.",
+                    fr: "Le sélecteur lit les sociétés de l'utilisateur dans get_session_info "
+                        + "(user_companies), gardées par serveur hors ligne, et ne propose un "
+                        + "choix que s'il y en a plusieurs, la dernière choisie d'abord. Chaque "
+                        + "appel à ce serveur se fait alors dans toutes (allowed_company_ids), pour "
+                        + "voir et écrire les records de chacune ; une création met la société "
+                        + "choisie en tête, celle où le serveur crée le record.",
+                },
+                dependsOn: ["sync.odoo-rpc"],
+                demo: NONE_BG,
+                files: ["src/services/odoo/odooRpcClient.ts"],
+            },
+            {
+                id: "sync.attachments",
+                label: { en: "Note files as attachments", fr: "Fichiers de la note en pièces jointes" },
+                description: {
+                    en: "A note's photos, recordings and videos go to its records and messages, within a size and network limit.",
+                    fr: "Les photos, enregistrements et vidéos d'une note vont à ses records et messages, dans une limite de taille et de réseau.",
+                },
+                status: "experimental",
+                permissions: ["internet"],
+                tests: ["src/__tests__/attachmentService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "After each create or write of a note's task, opportunity or invoice, and "
+                        + "of each message it posted, its media files not sent yet to that record "
+                        + "become ir.attachment of it (a message then lists them beside its own). "
+                        + "Options › Odoo sync set Wi-Fi only (a file held back goes on the next "
+                        + "push) and a largest size (a larger file is left out). Each file goes "
+                        + "once per record; a removed one stays on the server; a refusal is kept "
+                        + "and never fails the push. Activities take none. A file left out "
+                        + "(too big, missing, refused) is named on the note, with why, until sent; "
+                        + "so are those held for Wi-Fi while off it, and going onto Wi-Fi syncs.",
+                    fr: "Après chaque création ou écriture de la tâche, de l'opportunité ou de la "
+                        + "facture d'une note, et de chaque message qu'elle a posté, ses fichiers "
+                        + "pas encore envoyés à ce record en deviennent des ir.attachment (un "
+                        + "message les ajoute alors aux siens). Options › Synchronisation Odoo "
+                        + "règle le Wi-Fi seulement (un fichier retenu part à l'envoi suivant) et "
+                        + "la plus grosse taille (au-delà, le fichier est laissé de côté). Chaque "
+                        + "fichier part une fois par record ; un fichier retiré reste sur le "
+                        + "serveur ; un refus est noté sans faire échouer l'envoi. Les activités "
+                        + "n'en prennent pas. Un fichier laissé de côté (trop gros, introuvable, "
+                        + "refusé) est nommé sur la note, avec la raison, jusqu'à son envoi ; de "
+                        + "même ceux retenus pour le Wi-Fi hors Wi-Fi, et passer au Wi-Fi synchronise.",
+                },
+                dependsOn: ["sync.task-project", "sync.message"],
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/attachmentService.ts"],
+            },
+            {
+                id: "sync.http-policy",
+                label: { en: "Unencrypted http", fr: "http non chiffré" },
+                description: {
+                    en: "http:// servers refused unless allowed in the options.",
+                    fr: "Serveurs http:// refusés sauf autorisation dans les options.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/httpPolicy.test.ts"],
+                howItWorks: {
+                    en: "Every request to Odoo goes through OdooRpcClient.rawPost, which "
+                        + "refuses an http:// url with InsecureHttpError, before anything is "
+                        + "sent, while \"Allow http (unencrypted)\" is off in Options › Odoo "
+                        + "sync. Opening an application, or a note's record, in the web view "
+                        + "is refused the same way, since its login script types the "
+                        + "password. The option is stored in localStorage; unreadable storage "
+                        + "counts as off.",
+                    fr: "Toute requête vers Odoo passe par OdooRpcClient.rawPost, qui refuse "
+                        + "une url http:// par InsecureHttpError, avant tout envoi, tant que "
+                        + "« Autoriser http (non chiffré) » est désactivé dans Options › "
+                        + "Synchronisation Odoo. Ouvrir une application, ou l'enregistrement "
+                        + "d'une note, dans la vue web est refusé de même, son script de "
+                        + "connexion tapant le mot de passe. L'option est gardée dans "
+                        + "localStorage ; un stockage illisible vaut désactivé.",
+                },
+                demo: { kind: "options", sectionId: "sync" },
+                files: ["src/services/odoo/httpPolicy.ts"],
+            },
+            {
+                id: "sync.outbox",
+                label: { en: "Sync outbox", fr: "File d'opérations de sync" },
+                description: {
+                    en: "Operations waiting to reach a server, kept offline and retried.",
+                    fr: "Opérations en attente d'un serveur, gardées hors ligne et retentées.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/outboxService.test.ts", "src/__tests__/syncService.test.ts"],
+                howItWorks: {
+                    en: "sync_outbox holds one row per operation of a note on one server, "
+                        + "with a client_uuid kept across retries. attempt() stores the "
+                        + "attempt count and the running status before the handler talks to "
+                        + "the server, deletes the row on success, schedules a retry after "
+                        + "30 s doubled per failure (one hour at most), or parks the row as "
+                        + "blocked when the handler raises OutboxBlockedError; "
+                        + "OutboxRetryLaterError postpones the row without counting an attempt, "
+                        + "even past a forced sync. drain(config) "
+                        + "runs the due rows oldest first, after the row each depends on; "
+                        + "blocked and incomplete rows wait for the user. Rows left running "
+                        + "by a killed app turn failed at startup.",
+                    fr: "sync_outbox porte une ligne par opération d'une note sur un "
+                        + "serveur, avec un client_uuid gardé d'un essai à l'autre. attempt() "
+                        + "enregistre le nombre d'essais et l'état running avant que le "
+                        + "handler ne parle au serveur, supprime la ligne en cas de succès, "
+                        + "planifie un nouvel essai après 30 s doublées à chaque échec (une "
+                        + "heure au plus), ou gare la ligne en blocked quand le handler lève "
+                        + "OutboxBlockedError ; OutboxRetryLaterError reporte la ligne sans "
+                        + "compter d'essai, même lors d'une sync forcée. drain(config) "
+                        + "exécute les lignes dues, des plus "
+                        + "anciennes aux plus récentes, après celle dont chacune dépend ; les "
+                        + "lignes blocked et incomplete attendent l'utilisateur. Les lignes "
+                        + "laissées running par une app tuée passent en failed au démarrage.",
+                },
+                dependsOn: ["sync.service"],
+                demo: NONE_BG,
+                files: ["src/services/outboxService.ts"],
+            },
+            {
+                id: "sync.network",
+                label: { en: "Network detection", fr: "Détection du réseau" },
+                description: {
+                    en: "Online state and link type; flushes the queue when it comes back.",
+                    fr: "État en ligne et type de lien ; vide la file au retour du réseau.",
+                },
+                status: "experimental",
+                tests: ["src/__tests__/networkService.test.ts", "src/__tests__/notificationService.test.ts"],
+                howItWorks: {
+                    en: "NetworkService reads @capacitor/network (Android "
+                        + "ConnectivityManager), falling back to navigator.onLine and the "
+                        + "window online event on an APK built without the plugin. "
+                        + "NotificationService syncs every server on an offline → online "
+                        + "transition, retry delays ignored, and the servers with due work at "
+                        + "startup, on each return to the foreground and when a timer reaches "
+                        + "the earliest retry time. The plugin's own connected flag needs a "
+                        + "validated internet link, so any Wi-Fi or cellular link counts as "
+                        + "connected (Ethernet and tethering report \"unknown\"): a server on "
+                        + "a LAN without internet stays reachable.",
+                    fr: "NetworkService lit @capacitor/network (ConnectivityManager "
+                        + "d'Android), avec repli sur navigator.onLine et l'événement online "
+                        + "de la fenêtre pour un APK construit sans le plugin. "
+                        + "NotificationService synchronise chaque serveur au passage hors "
+                        + "ligne → en ligne, sans attendre les délais, et les serveurs qui ont "
+                        + "du travail dû au démarrage, à chaque retour au premier plan et "
+                        + "quand une minuterie atteint la prochaine heure de reprise. Le "
+                        + "« connected » du plugin exige un lien internet validé : tout lien "
+                        + "Wi-Fi ou cellulaire compte donc comme connecté (Ethernet et partage "
+                        + "de connexion donnent « unknown »), et un serveur sur un réseau "
+                        + "local sans internet reste joignable.",
+                },
+                dependsOn: ["sync.outbox"],
+                demo: NONE_BG,
+                files: ["src/services/networkService.ts"],
             },
             {
                 id: "sync.options",
@@ -1527,12 +2151,26 @@ export const FEATURE_TREE: FeatureNode[] = [
                     en: "Versioned schema steps that grew the sync feature: addSyncColumns "
                         + "(initial odoo_id + sync_status), addSyncConfigId (per-server "
                         + "binding), addSyncPerServerStatus (separate sync_status row per "
-                        + "target), addSelectedSyncConfigIds (multi-select). Each migration is "
+                        + "target), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(one remote record per note and url|username|database target, "
+                        + "backfilled from odoo_id; older ids gain the database; legacy global "
+                        + "pending turned per-server; pull cursors), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Each migration is "
                         + "idempotent and re-runs safely on app start.",
                     fr: "Étapes de schéma versionnées qui ont fait grandir la sync : "
                         + "addSyncColumns (odoo_id + sync_status initiaux), addSyncConfigId "
                         + "(binding par serveur), addSyncPerServerStatus (ligne sync_status par "
-                        + "cible), addSelectedSyncConfigIds (multi-select). Chaque migration est "
+                        + "cible), addSelectedSyncConfigIds (multi-select), addNoteLinksTable "
+                        + "(un record distant par note et cible url|username|base, repris "
+                        + "d'odoo_id ; les anciens ids reçoivent la base ; l'ancien pending "
+                        + "global devient par serveur ; curseurs de pull), addSyncOutboxTable "
+                        + "(sync_outbox, server_capabilities, note_links.client_uuid), "
+                        + "addSyncTargetTables (remote_records_cache, sync_target_prefs), "
+                        + "addNoteLinkParams (note_links.params_json), addActivitiesCacheTable "
+                        + "(activities_cache). Chaque migration est "
                         + "idempotente et se ré-exécute sans risque au boot.",
                 },
                 dependsOn: ["data.migrations"],
@@ -1542,8 +2180,17 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/services/migrations/addSyncConfigId.ts",
                     "src/services/migrations/addSyncPerServerStatus.ts",
                     "src/services/migrations/addSelectedSyncConfigIds.ts",
+                    "src/services/migrations/addNoteLinksTable.ts",
+                    "src/services/migrations/addSyncOutboxTable.ts",
+                    "src/services/migrations/addSyncTargetTables.ts",
+                    "src/services/migrations/addNoteLinkParams.ts",
+                    "src/services/migrations/addActivitiesCacheTable.ts",
                 ],
-                tests: ["src/__tests__/migrations.test.ts"],
+                tests: [
+                    "src/__tests__/migrations.test.ts",
+                    "src/__tests__/syncService.test.ts",
+                    "src/__tests__/outboxService.test.ts",
+                ],
             },
             {
                 id: "sync.notifications",
@@ -1792,16 +2439,25 @@ export const FEATURE_TREE: FeatureNode[] = [
                         + "tars each project (parallel pool sized to nproc) "
                         + "and writes them to src/public/repos/ alongside a "
                         + "manifest.json. Build flags BUNDLE_SKIP_REPOS and "
-                        + "BUNDLE_SKIP_ERPLIBRE shave APK size for dev loops.",
+                        + "BUNDLE_SKIP_ERPLIBRE shave APK size for dev loops. "
+                        + "The workspace bundle (src/public/erplibre/) carries "
+                        + "only the files git tracks: ignored or unversioned "
+                        + "paths such as tasks/ never reach the APK, and "
+                        + "without git to list them it is left out.",
                     fr: "Plugin Vite custom : lit le manifest Google-Repo, "
                         + "tar chaque projet (pool parallèle = nproc) et "
                         + "écrit dans src/public/repos/ avec un manifest.json. "
                         + "Flags BUNDLE_SKIP_REPOS et BUNDLE_SKIP_ERPLIBRE "
-                        + "réduisent la taille APK en dev.",
+                        + "réduisent la taille APK en dev. Le bundle de "
+                        + "l'espace de travail (src/public/erplibre/) ne porte "
+                        + "que les fichiers que git suit : un chemin ignoré ou "
+                        + "non versionné, comme tasks/, n'atteint jamais l'APK, "
+                        + "et sans git pour les lister il est omis.",
                 },
                 status: "stable",
                 demo: NONE_BG,
                 files: ["vite.config.ts"],
+                tests: ["src/__tests__/bundleWorkspaceFilter.test.ts"],
             },
             {
                 id: "repos.bundle-code",
@@ -2686,6 +3342,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                 demo: NONE_BG,
                 files: [
                     "src/services/migrationService.ts",
+                    "src/services/migrations/index.ts",
                     "src/services/dataMigration.ts",
                 ],
                 tests: [
@@ -3007,6 +3664,39 @@ export const FEATURE_TREE: FeatureNode[] = [
                 files: [
                     "src/components/options/changelog/options_changelog_component.ts",
                     "src/utils/changelogUtils.ts",
+                ],
+            },
+            {
+                id: "meta.licenses",
+                label: { en: "Third-party licenses", fr: "Licences tierces" },
+                description: {
+                    en: "Names the bundled libraries whose license asks for a notice, with the license text and a link to the source.",
+                    fr: "Nomme les bibliothèques embarquées dont la licence exige une mention, avec le texte de la licence et un lien vers le code source.",
+                },
+                status: "stable",
+                howItWorks: {
+                    en: "An expandable Options entry lists THIRD_PARTY_NOTICES: for the MP3 encoder "
+                        + "@breezystack/lamejs (LGPL-3.0) it shows its version, a sentence on what the app "
+                        + "uses it for, the link to its source and the LICENSE text the package ships, "
+                        + "bundled as a text asset. The chat's emoji data follows, under the Unicode licence "
+                        + "of CLDR, with the Odoo 18 web module (LGPL-3.0) it is converted from; an entry "
+                        + "without a base licence shows no button for one.",
+                    fr: "Une entrée dépliable des Options liste THIRD_PARTY_NOTICES : pour l'encodeur MP3 "
+                        + "@breezystack/lamejs (LGPL-3.0), elle montre sa version, une phrase sur l'usage "
+                        + "qu'en fait l'application, le lien vers son code source et le texte LICENSE "
+                        + "livré par le paquet, embarqué comme ressource texte. Les données d'émojis du "
+                        + "clavardage suivent, sous la licence Unicode de CLDR, avec le module web d'Odoo 18 "
+                        + "(LGPL-3.0) dont elles sont converties ; une entrée sans licence de base ne montre "
+                        + "aucun bouton pour en afficher une.",
+                },
+                demo: { kind: "options", sectionId: "licenses" },
+                files: [
+                    "src/components/options/licenses/options_licenses_component.ts",
+                    "src/components/options/licenses/options_licenses_component.scss",
+                    "src/assets/licenses/breezystack-lamejs.LICENSE.txt",
+                    "src/assets/licenses/LGPL-3.0.txt",
+                    "src/assets/licenses/GPL-3.0.txt",
+                    "src/assets/licenses/unicode-cldr.LICENSE.txt",
                 ],
             },
             {
@@ -3337,6 +4027,7 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "src/components/options/sms_gateway/options_sms_gateway_component.ts",
                     "src/components/options/sms_gateway/options_sms_gateway_component.scss",
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayPlugin.java",
+                    "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
                     "android/app/src/main/java/ca/erplibre/home/SmsGatewayConfig.java",
                 ],
             },
@@ -3566,6 +4257,1547 @@ export const FEATURE_TREE: FeatureNode[] = [
                     "android/app/src/main/java/ca/erplibre/home/CallAudio.java",
                     "android/app/src/main/java/ca/erplibre/home/PhoneCalls.java",
                     "android/app/src/main/res/raw/demo_musique.wav",
+                ],
+            },
+        ],
+    },
+    {
+        id: "chat",
+        label: { en: "Chat", fr: "Clavardage" },
+        description: {
+            en: "Odoo 18 Discuss conversations on the phone, from the local cache.",
+            fr: "Conversations Discuss d'Odoo 18 sur le téléphone, depuis le cache local.",
+        },
+        status: "experimental",
+        howItWorks: {
+            en: "Only Odoo 18 servers are chat sources. Each account is its own "
+                + "source with its own cache. Pure helpers decide the unread "
+                + "count, the sort, the message body and the settings, so the "
+                + "rules are the same on every screen.",
+            fr: "Seuls les serveurs Odoo 18 sont des sources de clavardage. "
+                + "Chaque compte est sa propre source, avec son propre cache. "
+                + "Des fonctions pures décident du compte de non lus, du tri, "
+                + "du corps des messages et des réglages, donc les règles sont "
+                + "les mêmes sur tous les écrans.",
+        },
+        demo: NONE_PLUMBING,
+        children: [
+            {
+                id: "chat.sources",
+                label: { en: "Chat sources", fr: "Sources de clavardage" },
+                description: {
+                    en: "Which servers are chat sources, how to choose one, their labels.",
+                    fr: "Quels serveurs sont des sources, comment en choisir une, leurs étiquettes.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/models/chat.ts",
+                    "src/services/chat/chatSources.ts",
+                ],
+            },
+            {
+                id: "chat.unread",
+                label: { en: "Unread rules", fr: "Règles des non lus" },
+                description: {
+                    en: "Unread counts, muting and the conversation sort.",
+                    fr: "Comptes de non lus, sourdine et tri des conversations.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatUnread.ts",
+                    "src/services/chat/chatMute.ts",
+                ],
+            },
+            {
+                id: "chat.names",
+                label: { en: "Conversation names", fr: "Noms des conversations" },
+                description: {
+                    en: "The name a chat, group or channel is shown under, as Odoo.",
+                    fr: "Le nom sous lequel une discussion, un groupe ou un canal s'affiche, comme Odoo.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatNames.ts",
+                ],
+            },
+            {
+                id: "chat.authors",
+                label: { en: "Message authors", fr: "Auteurs des messages" },
+                description: {
+                    en: "In a group or a channel, others' bubbles show their author's name and avatar, as the browser.",
+                    fr: "Dans un groupe ou un canal, les bulles des autres montrent le nom et l'avatar de leur auteur, comme le navigateur.",
+                },
+                status: "experimental",
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A run of messages follows Odoo 18's isSquashed (same author, the previous one not a "
+                        + "notification, not a note, under 5 minutes; emptied messages are not shown, so they never "
+                        + "end a run): its first bubble has the name above "
+                        + "and the round avatar on the left, its others the same indent. The avatar is Odoo's "
+                        + "/web/image/res.partner/<id>/avatar_128, its write date as unique, fetched with the session "
+                        + "once on screen and online, two at a time, Wi-Fi or not, and cached under the account's chat "
+                        + "directory with its bytes in SQLite; until then, or when it fails, the initials show on a "
+                        + "colour of the partner id. It counts in the chat's space (not in what the purge weighs, as it never "
+                        + "removes it) and goes with « Remove all downloaded files ».",
+                    fr: "Une suite de messages suit isSquashed d'Odoo 18 (même auteur, le précédent pas une "
+                        + "notification, pas une note, moins de 5 minutes ; un message vidé n'est pas affiché, il "
+                        + "n'interrompt donc jamais une suite) : sa première bulle porte le nom "
+                        + "au-dessus et l'avatar rond à gauche, les autres le même retrait. L'avatar est "
+                        + "/web/image/res.partner/<id>/avatar_128 d'Odoo, sa date d'écriture en unique, téléchargé "
+                        + "avec la session une fois à l'écran et en ligne, deux à la fois, en Wi-Fi ou non, et gardé dans "
+                        + "le répertoire de clavardage du compte avec ses octets dans SQLite ; d'ici là, ou en cas "
+                        + "d'échec, les initiales s'affichent sur une couleur tirée de l'id du partenaire. Il compte "
+                        + "dans l'espace du clavardage (pas dans ce que la purge pèse : elle ne le retire jamais) et part "
+                        + "avec « Retirer tous les fichiers téléchargés ».",
+                },
+                files: [
+                    "src/services/chat/chatAvatars.ts",
+                    "src/components/chat/chat_avatar_component.ts",
+                    "src/services/migrations/addChatAvatars.ts",
+                ],
+            },
+            {
+                id: "chat.body",
+                label: { en: "Message body", fr: "Corps des messages" },
+                description: {
+                    en: "Text to body, safe rendering of a received body, previews.",
+                    fr: "Texte vers corps, rendu sûr d'un corps reçu, aperçus.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatBody.ts",
+                ],
+            },
+            {
+                id: "chat.settings",
+                label: { en: "Chat settings", fr: "Réglages du clavardage" },
+                description: {
+                    en: "Whether read and typing are sent to the server, the attachment cache's purge and limit, and asking before compressing photos.",
+                    fr: "Si la lecture et la frappe sont envoyées au serveur, la purge et la limite du cache des pièces jointes, et la question avant de compresser les photos.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatSettings.ts",
+                ],
+            },
+            {
+                id: "chat.on-top",
+                label: { en: "Conversations on top", fr: "Conversations en haut de la liste" },
+                description: {
+                    en: "Conversations kept on top of the list, local to the phone, and the list order setting (pinned first or unread first).",
+                    fr: "Conversations gardées en haut de la liste, propres au téléphone, et le réglage de l'ordre de la liste (épinglées d'abord ou non lues d'abord).",
+                },
+                status: "experimental",
+                dependsOn: ["chat.settings", "chat.unread"],
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/services/migrations/addChatOnTop.ts",
+                    "src/services/chat/chatUnread.ts",
+                    "src/services/chat/chatSettings.ts",
+                ],
+            },
+            {
+                id: "chat.options",
+                label: { en: "Chat options", fr: "Options du clavardage" },
+                description: {
+                    en: "Options section with the send read and send typing switches, the global mute and Odoo's general channel setting per server.",
+                    fr: "Section des options avec les interrupteurs d'envoi de « lu » et de « écrit… », la sourdine globale et le réglage général des canaux d'Odoo par serveur.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.settings"],
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/components/options/chat/options_chat_component.ts",
+                ],
+                tests: ["src/__tests__/optionsChatComponent.test.ts"],
+            },
+            {
+                id: "chat.store",
+                label: { en: "Odoo Store parser", fr: "Analyseur du Store Odoo" },
+                description: {
+                    en: "Turns an Odoo 18 Discuss Store result into partial cache records.",
+                    fr: "Transforme un résultat Store de Discuss d'Odoo 18 en enregistrements partiels du cache.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatStore.ts",
+                ],
+            },
+            {
+                id: "chat.cache",
+                label: { en: "Chat cache", fr: "Cache du clavardage" },
+                description: {
+                    en: "SQLite tables and repository holding channels, messages, members and pending posts per account.",
+                    fr: "Tables SQLite et dépôt des canaux, messages, membres et envois en attente, par compte.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/migrations/addChatTables.ts",
+                    "src/services/migrations/addChatLot2Columns.ts",
+                    "src/services/migrations/addChatCreateFailed.ts",
+                    "src/services/migrations/addChatLeftUnsent.ts",
+                    "src/services/migrations/addChatAttachments.ts",
+                    "src/services/migrations/addChatActions.ts",
+                    "src/services/migrations/addChatMessageSearch.ts",
+                    "src/services/migrations/addChatMailbox.ts",
+                    "src/services/chat/chatRepository.ts",
+                ],
+            },
+            {
+                id: "chat.reactions",
+                label: { en: "Message reactions", fr: "Réactions aux messages" },
+                description: {
+                    en: "Reaction groups, reply parents and mentioned partners of the messages, read from the server and cached per account.",
+                    fr: "Groupes de réactions, messages d'origine des réponses et partenaires mentionnés, lus du serveur et gardés en cache par compte.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.store", "chat.cache"],
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "The Store's MessageReactions give one group per (message, emoji): count, partners in the "
+                        + "server's order, guests counted, and whether the user is among them. A plain reactions list "
+                        + "on a message is its full set (groups it does not name go); DELETE, as one object or a list, "
+                        + "removes a group. Groups live in chat_reactions keyed by the message's m<id>, or u<uuid> "
+                        + "while it is queued, and move to m<id> when the post settles. A message the server deletes "
+                        + "(bus mail.message/delete) leaves with its reactions and its files. The user's own "
+                        + "reaction is queued as a target state per (message, emoji): add and remove are explicit, a "
+                        + "later tap rewrites the op waiting, and one that brings the server back where it stood "
+                        + "sends nothing. A reaction on a message not sent yet waits for its post and names it by "
+                        + "its client uuid. Until sent, the reaction is laid over what a load, a history page or "
+                        + "the bus brings; a message gone or emptied drops it with a notice.",
+                    fr: "Les MessageReactions du Store donnent un groupe par (message, émoji) : le nombre, les "
+                        + "partenaires dans l'ordre du serveur, les invités comptés, et si l'utilisateur en est. Une "
+                        + "liste simple de réactions sur un message en est l'ensemble complet (les groupes qu'elle ne "
+                        + "nomme pas partent) ; DELETE, objet seul ou liste, retire un groupe. Les groupes vivent dans "
+                        + "chat_reactions sous la clé m<id> du message, ou u<uuid> tant qu'il est en file, et passent à "
+                        + "m<id> quand l'envoi aboutit. Un message que le serveur supprime (bus mail.message/delete) "
+                        + "part avec ses réactions et ses fichiers. La réaction de l'utilisateur est mise en file "
+                        + "comme état visé par (message, émoji) : ajout et retrait sont explicites, une touche "
+                        + "suivante réécrit l'opération en attente, et celle qui ramène le serveur où il en était "
+                        + "n'envoie rien. Une réaction à un message pas encore envoyé attend son envoi et le nomme "
+                        + "par son uuid client. Tant qu'elle n'est pas envoyée, elle recouvre ce qu'apportent un "
+                        + "chargement, une page d'historique ou le bus ; un message disparu ou vidé la retire avec "
+                        + "un avis.",
+                },
+                files: [
+                    "src/services/chat/chatStore.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/migrations/addChatActions.ts",
+                    "src/components/chat/chat_reactions_component.ts",
+                    "src/components/chat/chat_reactions_component.scss",
+                ],
+                tests: [
+                    "src/__tests__/chatStore.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatReactionsComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.message-actions",
+                label: { en: "Message actions", fr: "Actions sur un message" },
+                description: {
+                    en: "A long press on a message opens its menu: six emojis in one touch and « … » for the picker, reply, copy, edit and delete; reaction chips under the message toggle and tell who reacted.",
+                    fr: "Un appui long sur un message ouvre son menu : six émojis d'une touche et « … » pour le sélecteur, répondre, copier, modifier et supprimer ; les pastilles de réaction sous le message basculent et disent qui a réagi.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.reactions", "chat.emoji"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "chatLongPress.ts runs a 500 ms timer from pointerdown, stopped by a move beyond 10 px, "
+                        + "the release, a pointercancel or a scroll; it calls no preventDefault, so the list "
+                        + "scrolls. The bubble's contextmenu is prevented: a long press opens the menu, never a "
+                        + "native text selection, and « Copy » copies the whole message. "
+                        + "The click that ends a long press is swallowed. The menu offers what Odoo's message "
+                        + "actions do: react on comment messages, delete on the user's own (a failed one is "
+                        + "dropped), copy on any message with text; a notification offers nothing. A quick emoji the user already put on comes "
+                        + "off; a pick in the picker opened by « … » only adds, as Odoo's. Copy writes "
+                        + "bodyText through navigator.clipboard and shows « Copied » for 1.5 s; delete asks "
+                        + "first. A chip tap toggles the user's reaction; a long press lists the partners by "
+                        + "cached name (the user by theirs, else « You ») and one « Guest » per guest. A "
+                        + "« Message actions » button on each bubble, out of sight until the keyboard focuses "
+                        + "it, opens the menu without a long press. Each layer (picker, menu, who reacted, "
+                        + "image viewer) takes a history entry (chatBackEntry.ts), so back closes it; a "
+                        + "popstate landing on an entry still carrying its mark is a layer above it going back. "
+                        + "The menu and the who-reacted sheet give the focus back on close (chatSheetFocus.ts); "
+                        + "a composer that held it keeps it, its keyboard open. A tap on a quote whose original "
+                        + "is older than the rendered rows renders more of the cached history, then scrolls to it. "
+                        + "Reply and Edit put the composer in their mode, with a banner (the quote, ✕) above it, "
+                        + "both kept in the draft: a reply posts with its parent; an edit fills the composer "
+                        + "with the message's text, keeps the new message's text apart for after, and ➤ queues "
+                        + "the edit; an emptied edit of a message without files asks to delete it. A refused "
+                        + "edit's « Reprendre » (list or thread) brings its text back in edit mode, or into "
+                        + "the new message when the message was deleted; its text is stored in the draft before "
+                        + "its notice goes. Leaving an edit typed into for a reply or another edit asks first "
+                        + "(Abandon or Keep; a kept edit takes the reply under it); ✕ asks nothing.",
+                    fr: "chatLongPress.ts lance une minuterie de 500 ms au pointerdown, arrêtée par un "
+                        + "déplacement de plus de 10 px, le relâchement, un pointercancel ou un défilement ; il "
+                        + "n'appelle aucun preventDefault, donc la liste défile. Le contextmenu de la bulle est "
+                        + "empêché : un appui long ouvre le menu, jamais une sélection de texte native, et "
+                        + "« Copier » copie le message entier. Le clic qui termine un appui long "
+                        + "est avalé. Le menu offre ce qu'offrent les actions de message d'Odoo : réagir sur les "
+                        + "messages comment, supprimer les siens (un échoué est abandonné), copier tout message "
+                        + "qui a du texte ; une notification n'offre rien. Un émoji rapide déjà mis par l'utilisateur s'enlève ; un choix dans "
+                        + "le sélecteur ouvert par « … » ne fait qu'ajouter, comme celui d'Odoo. Copier écrit "
+                        + "bodyText par navigator.clipboard et affiche « Copié » 1,5 s ; supprimer demande "
+                        + "d'abord. Une touche sur une pastille bascule la réaction de l'utilisateur ; un appui "
+                        + "long liste les partenaires par leur nom en cache (l'utilisateur par le sien, sinon "
+                        + "« Vous ») et un « Invité » par invité. Un bouton « Actions du message » sur chaque "
+                        + "bulle, hors de vue tant que le clavier ne le sélectionne pas, ouvre le menu sans appui "
+                        + "long. Chaque couche (sélecteur, menu, qui a réagi, visionneuse d'images) prend une "
+                        + "entrée d'historique (chatBackEntry.ts), donc retour la ferme ; un popstate qui arrive "
+                        + "sur une entrée portant encore sa marque est une couche au-dessus qui se referme. "
+                        + "Le menu et la feuille « qui a réagi » rendent le focus à la fermeture "
+                        + "(chatSheetFocus.ts) ; un composeur qui l'avait le garde, clavier ouvert. Toucher une "
+                        + "citation dont l'original est plus ancien que les bulles affichées affiche plus de "
+                        + "l'historique en cache, puis y défile. "
+                        + "Répondre et Modifier mettent le composeur dans leur mode, avec un bandeau (la "
+                        + "citation, ✕) au-dessus, tous deux gardés dans le brouillon : une réponse part avec "
+                        + "son parent ; une modification remplit le composeur du texte du message, met de côté "
+                        + "le texte du nouveau message pour après, et ➤ met la modification en file ; une "
+                        + "modification vidée d'un message sans fichier demande de le supprimer. « Reprendre » "
+                        + "sur une modification refusée (liste ou conversation) ramène son texte en "
+                        + "modification, ou dans le nouveau message quand le message a été supprimé ; son texte "
+                        + "est enregistré dans le brouillon avant que son avis parte. Quitter une modification "
+                        + "déjà retouchée pour une réponse ou une autre modification demande d'abord (Abandonner "
+                        + "ou Garder ; une modification gardée prend la réponse sous elle) ; ✕ ne demande rien.",
+                },
+                files: [
+                    "src/components/chat/chatLongPress.ts",
+                    "src/components/chat/chatBackEntry.ts",
+                    "src/components/chat/chatSheetFocus.ts",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_message_menu_component.scss",
+                    "src/components/chat/chat_composer_banner_component.ts",
+                    "src/components/chat/chat_composer_banner_component.scss",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatLongPress.test.ts",
+                    "src/__tests__/chatBackEntry.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatComposerBanner.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.pins",
+                label: { en: "Pinned messages", fr: "Messages épinglés" },
+                description: {
+                    en: "Pin or unpin a message from its long-press menu, the « Pinned messages » panel from the ⋮ menu, and the pin notices shown as system lines whose links go to the message or the panel.",
+                    fr: "Épingler ou désépingler un message depuis son menu d'appui long, le panneau « Messages épinglés » depuis le menu ⋮, et les avis d'épinglage affichés en lignes système dont les liens mènent au message ou au panneau.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.message-actions", "chat.search"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A pin is a target state of the message queued in the outbox (chat.pin): the op waiting "
+                        + "takes the last tap and keeps the server's state when it was queued (base), a tap back "
+                        + "to it sends nothing, and set_message_pin, idempotent, is sent again after a lost answer. "
+                        + "A message emptied or gone meanwhile drops the pin with a notice and shows the base "
+                        + "again. Épingler and Désépingler ask first, as the browser does, on a sent comment of a "
+                        + "conversation the user writes in. The panel reads /discuss/channel/pinned_messages "
+                        + "(read-only, nothing marked read), writes it to the cache with the queued pins laid "
+                        + "over it, unpins the cached messages it no longer lists, and orders the unread first, "
+                        + "then by pin date; offline it shows the phone's list and says so. A tap goes to the "
+                        + "message as a search hit does. Odoo's pin notice is a notification message: a centered "
+                        + "line without menu, its two links kept as chips without href.",
+                    fr: "Un épinglage est un état visé du message mis en file dans la boîte d'envoi (chat.pin) : "
+                        + "l'opération en attente prend la dernière touche et garde l'état du serveur au moment "
+                        + "de la mise en file (base), une touche qui y ramène n'envoie rien, et set_message_pin, "
+                        + "idempotent, est renvoyé après une réponse perdue. Un message vidé ou disparu entre-temps "
+                        + "retire l'épinglage avec un avis et réaffiche la base. Épingler et Désépingler "
+                        + "demandent confirmation, comme le navigateur, sur un commentaire envoyé d'une "
+                        + "conversation où l'on écrit. Le panneau lit /discuss/channel/pinned_messages (en "
+                        + "lecture seule, rien n'est marqué lu), l'écrit dans le cache sous les épinglages en "
+                        + "file, désépingle les messages en cache qu'il ne liste plus, et range les non lus "
+                        + "d'abord, puis par date d'épinglage ; hors ligne il montre la liste du téléphone et "
+                        + "le dit. Une touche mène au message comme un résultat de recherche. L'avis d'épinglage "
+                        + "d'Odoo est un message de notification : une ligne centrée sans menu, ses deux liens "
+                        + "gardés en pastilles sans href.",
+                },
+                files: [
+                    "src/components/chat/chat_pinned_component.ts",
+                    "src/components/chat/chat_pinned_component.scss",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatBody.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatPinned.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatBody.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.starred",
+                label: { en: "Starred messages", fr: "Messages favoris" },
+                description: {
+                    en: "Star or unstar a message from its long-press menu, a ★ on its bubble, and « ★ Starred » above the conversations with the count of the accounts shown.",
+                    fr: "Mettre un message en favori ou l'en retirer depuis son menu d'appui long, une ★ sur sa bulle, et « ★ Favoris » au-dessus des conversations avec le compte des serveurs affichés.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.message-actions"],
+                demo: { kind: "route", url: "/chat" },
+                howItWorks: {
+                    en: "A star is the account's target state of a message, of a channel or of a record, queued in "
+                        + "the outbox (chat.star) with the flag cached when it was queued (base); a tap back to it "
+                        + "sends nothing. With module 1.4 erplibre_set_starred sets the target, idempotent. Without "
+                        + "it Odoo's toggle_message_starred flips whatever the server holds, so the server's flag is "
+                        + "read before every send, a replay after a lost answer included, and the toggle goes only "
+                        + "when it differs from the target. The star shows at once in the thread, in the starred "
+                        + "box (chat_mailbox) and in the counter; the bus mail.message/toggle_star moves the counter "
+                        + "only for a flag shown that changed or a message the phone does not hold, so the echo of "
+                        + "the phone's own star counts nothing; a replay sets the flag and counts nothing. A page of "
+                        + "/mail/starred/messages (read-only) unstars the cached rows in the id range it covers that "
+                        + "it no longer lists, unless a star waits; only a complete first page sets the counter (the "
+                        + "starred rows left). « ★ Starred » opens on the accounts its count counts (?s= while the "
+                        + "list keeps one server). "
+                        + "A delete cancels the waiting star of its message, as Odoo's delete clears the stars of "
+                        + "the message it empties and sends the starred box without it.",
+                    fr: "Un favori est l'état visé d'un message pour le compte, d'une conversation ou d'un "
+                        + "enregistrement, mis en file dans la boîte d'envoi (chat.star) avec l'indicateur en cache "
+                        + "au moment de la mise en file (base) ; une touche qui y ramène n'envoie rien. Avec le "
+                        + "module 1.4, erplibre_set_starred pose la cible, idempotent. Sans lui, toggle_message_starred "
+                        + "d'Odoo inverse ce que le serveur tient : l'indicateur du serveur est relu avant chaque "
+                        + "envoi, une reprise après une réponse perdue comprise, et la bascule ne part que s'il "
+                        + "diffère de la cible. Le favori s'affiche aussitôt dans le fil, dans la boîte des favoris "
+                        + "(chat_mailbox) et dans le compteur ; le bus mail.message/toggle_star ne déplace le "
+                        + "compteur que pour un indicateur affiché qui change ou un message que le téléphone n'a "
+                        + "pas, donc l'écho du favori du téléphone ne compte rien ; une reprise pose l'indicateur "
+                        + "sans compter. Une page de /mail/starred/messages (en lecture seule) retire des favoris les "
+                        + "lignes en cache de la plage d'identifiants qu'elle couvre et qu'elle ne liste plus, sauf "
+                        + "favori en attente ; seule une première page complète fixe le compteur (les favoris "
+                        + "restants). « ★ Favoris » s'ouvre sur les serveurs que son compte compte (?s= quand la "
+                        + "liste n'en garde qu'un). "
+                        + "Une suppression annule le favori en attente de son message, comme la suppression d'Odoo "
+                        + "efface les favoris du message qu'elle vide et envoie la boîte des favoris sans lui.",
+                },
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatStore.ts",
+                    "src/components/chat/chat_message_menu_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                    "src/components/chat/chat_mailbox_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatStore.test.ts",
+                    "src/__tests__/chatMessageMenu.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.inbox",
+                label: { en: "Inbox", fr: "Boîte de réception" },
+                description: {
+                    en: "Odoo's inbox on the phone: mentions, followed records' messages and assignments, opened at the message, in the linked note or in Odoo, mark one or all as read, and the history, from « 📥 Inbox » above the conversations.",
+                    fr: "La boîte de réception d'Odoo sur le téléphone : mentions, messages des fiches suivies et assignations, ouverts au message, dans la note liée ou dans Odoo, marquer un ou tout comme lu, et l'historique, depuis « 📥 Boîte de réception » au-dessus des conversations.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.starred"],
+                demo: { kind: "route", url: "/chat/inbox" },
+                howItWorks: {
+                    en: "Pages of /mail/inbox/messages and /mail/history/messages (read-only, nothing marked read) "
+                        + "fill chat_mailbox, a channel message also its conversation's cache when the phone holds "
+                        + "it; an inbox page moves to the history the rows of the id range it covers that it no "
+                        + "longer lists. « Mark as read » queues chat.inbox_done (set_message_done, the ids of the "
+                        + "account's waiting op merged), « Mark all as read » chat.inbox_all (mark_all_as_read up to "
+                        + "the newest item the phone shows, so a newer mention stays unread). Both show at once: the "
+                        + "rows move to the history, the inbox count and the conversation's mentions go down by the "
+                        + "rows moved, kept in the op (cleared). Until it is sent, a server count read meanwhile (a "
+                        + "load, the bus) loses those rows again, in the same exclusive task as the write; the bus "
+                        + "mail.message/mark_as_read lowers a conversation only for a row still in the inbox, so the "
+                        + "phone's change and its echo count once. Once sent, the account is loaded again (a done of "
+                        + "an item read elsewhere sends no bus event); refused or gone, its rows go back to the inbox "
+                        + "and the counts. A tap opens an item (ChatInbox.openItem, from the inbox, the starred box "
+                        + "and the search alike; « 📥 Inbox » opens on the accounts its count counts, ?s= while the "
+                        + "list keeps one server): a mention its conversation at the message, a record's message or an "
+                        + "assignment the note linked to the record (note_links), else Odoo's /mail/message/<id> in "
+                        + "the web view (openRecordInApp, http policy kept); nothing is marked read. Each load reads "
+                        + "the user's notification_preference (get_session_info) into chat_sources.notification_type; "
+                        + "for an account notified by email the inbox tab explains why nothing arrives and offers "
+                        + "« Receive my notifications in Odoo » (ChatService.switchToInbox: res.users.write of the "
+                        + "user's own notification_type, online only, not queued; the type is read back before the "
+                        + "notice goes; a refusal offers « Open my preferences »; the button comes back with the "
+                        + "network).",
+                    fr: "Les pages de /mail/inbox/messages et /mail/history/messages (en lecture seule, rien n'est "
+                        + "marqué lu) remplissent chat_mailbox, un message de conversation aussi le cache de sa "
+                        + "conversation quand le téléphone la tient ; une page de la boîte de réception passe à "
+                        + "l'historique les lignes de la plage d'identifiants qu'elle couvre et qu'elle ne liste plus. "
+                        + "« Marquer comme lu » met en file chat.inbox_done (set_message_done, les identifiants de "
+                        + "l'opération en attente du compte fusionnés), « Tout marquer comme lu » chat.inbox_all "
+                        + "(mark_all_as_read jusqu'à l'élément le plus récent affiché, donc une mention plus récente "
+                        + "reste non lue). Les deux s'affichent aussitôt : les lignes passent à l'historique, le "
+                        + "compte de la boîte et les mentions de la conversation baissent des lignes déplacées, "
+                        + "gardées dans l'opération (cleared). Tant qu'elle n'est pas envoyée, un compte du serveur "
+                        + "lu entre-temps (un chargement, le bus) perd à nouveau ces lignes, dans la même tâche "
+                        + "exclusive que l'écriture ; le bus mail.message/mark_as_read ne baisse une conversation que "
+                        + "pour une ligne encore dans la boîte, donc le changement du téléphone et son écho comptent "
+                        + "une fois. Une fois envoyée, le compte est rechargé (un élément déjà lu ailleurs n'envoie "
+                        + "rien sur le bus) ; refusée ou disparue, ses lignes reviennent dans la boîte et les comptes. "
+                        + "Un toucher ouvre un élément (ChatInbox.openItem, depuis la boîte, les favoris et la "
+                        + "recherche ; « 📥 Boîte de réception » s'ouvre sur les serveurs que son compte compte, ?s= "
+                        + "quand la liste n'en garde qu'un) : une mention sa conversation au message, un message de fiche ou une assignation "
+                        + "la note liée à la fiche (note_links), sinon /mail/message/<id> d'Odoo dans la vue web "
+                        + "(openRecordInApp, politique http gardée) ; rien n'est marqué lu. Chaque chargement lit "
+                        + "notification_preference de l'utilisateur (get_session_info) dans "
+                        + "chat_sources.notification_type ; pour un compte notifié par courriel, l'onglet de la boîte "
+                        + "explique pourquoi rien n'arrive et offre « Recevoir mes notifications dans Odoo » "
+                        + "(ChatService.switchToInbox : res.users.write du notification_type de l'utilisateur lui-même, "
+                        + "en ligne seulement, sans file d'attente ; le type est relu avant que l'avis disparaisse ; "
+                        + "un refus offre « Ouvrir mes préférences » ; le bouton revient avec le réseau).",
+                },
+                files: [
+                    "src/services/chat/chatInbox.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/components/chat/chat_mailbox_component.ts",
+                    "src/components/chat/chat_mailbox_component.scss",
+                    "src/components/chat/chat_list_component.ts",
+                    "src/utils/openRecordInApp.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatInbox.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/openRecordInApp.test.ts",
+                ],
+            },
+            {
+                id: "chat.record-reply",
+                label: { en: "Reply on a record", fr: "Réponse sur une fiche" },
+                description: {
+                    en: "« Reply » on an inbox item of a followed record: a composer with files, voice, emoji, @ and # mentions and a kept draft, posting in the record's chatter as an internal note, or as a message to its followers after a confirmation, queued offline, never lost nor doubled.",
+                    fr: "« Répondre » sur un élément de la boîte de réception d'une fiche suivie : un compositeur avec fichiers, vocal, émojis, mentions @ et # et brouillon gardé, qui publie dans le fil de la fiche en note interne, ou en message aux abonnés après une confirmation, en file hors ligne, jamais perdu ni doublé.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.inbox", "chat.compose", "chat.drafts"],
+                demo: { kind: "route", url: "/chat/inbox" },
+                howItWorks: {
+                    en: "ChatOutbox.queueRecordPost queues chat.record_post, its files first as chat.upload ops on the "
+                        + "record (Odoo's /mail/attachment/upload with thread_model the record's model, or the module "
+                        + "1.4 route with a client uuid), then /mail/message/post on the record: mail.mt_note with "
+                        + "mail_post_autofollow false for a note, mail.mt_comment for a message, the body and "
+                        + "partner_ids of composeBody, the marker comment and, with the module, erplibre_client_uuid. "
+                        + "A retry finds the reply by its marker on the record before posting again; a lost upload "
+                        + "answer is found as the user's pending attachment. A refusal (no right to post, record gone, "
+                        + "its file refused) blocks the reply as a notice that keeps its text and files until "
+                        + "dismissed. Its files and draft rows carry the record (thread_model, thread_id) and "
+                        + "channel_id 0, so no conversation's draft, list or space counts them. The composer "
+                        + "(ChatRecordReplyComponent, offered on record items only, not on mentions nor "
+                        + "assignments) is the conversation's in its pieces: ComposerAttach over the record's draft "
+                        + "files, DraftText over its draft text, the emoji picker, @ from the people cache then "
+                        + "res.partner.get_mention_suggestions (ChatMentions.forRecord, no @everyone), # as in a "
+                        + "conversation; its field and suggestions are the thread's MentionField. Every reply sends "
+                        + "email_add_signature, as the browser's composer; a waiting reply shows under "
+                        + "its item with its file count.",
+                    fr: "ChatOutbox.queueRecordPost met en file chat.record_post, ses fichiers d'abord en opérations "
+                        + "chat.upload sur la fiche (/mail/attachment/upload d'Odoo avec thread_model le modèle de la "
+                        + "fiche, ou la route du module 1.4 avec un identifiant client), puis /mail/message/post sur "
+                        + "la fiche : mail.mt_note avec mail_post_autofollow faux pour une note, mail.mt_comment pour "
+                        + "un message, le corps et les partner_ids de composeBody, le commentaire marqueur et, avec le "
+                        + "module, erplibre_client_uuid. Une reprise cherche la réponse par son marqueur sur la fiche "
+                        + "avant de publier à nouveau ; une réponse de téléversement perdue est retrouvée comme pièce "
+                        + "jointe en attente de l'utilisateur. Un refus (pas le droit de publier, fiche disparue, son "
+                        + "fichier refusé) bloque la réponse en avis qui garde son texte et ses fichiers jusqu'à ce "
+                        + "qu'il soit fermé. Ses lignes de fichiers et de brouillon portent la fiche (thread_model, "
+                        + "thread_id) et channel_id 0 : aucun brouillon, aucune liste ni aucun espace de conversation "
+                        + "ne les compte. Le compositeur (ChatRecordReplyComponent, offert sur les éléments de fiche "
+                        + "seulement, ni sur les mentions ni sur les assignations) est celui d'une conversation en ses "
+                        + "pièces : ComposerAttach sur les fichiers de brouillon de la fiche, DraftText sur son texte, "
+                        + "le sélecteur d'émojis, @ depuis le cache des personnes puis "
+                        + "res.partner.get_mention_suggestions (ChatMentions.forRecord, sans @everyone), # comme dans "
+                        + "une conversation ; son champ et ses suggestions sont le MentionField du fil. Toute réponse "
+                        + "envoie email_add_signature, comme le compositeur du navigateur ; une réponse en "
+                        + "attente s'affiche sous son élément avec son nombre de fichiers.",
+                },
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatTransfer.ts",
+                    "src/services/migrations/addChatRecordThreads.ts",
+                    "src/services/chat/chatMentions.ts",
+                    "src/components/chat/chat_record_reply_component.ts",
+                    "src/components/chat/chat_record_reply_component.scss",
+                    "src/components/chat/chat_mailbox_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatRecordPost.test.ts",
+                    "src/__tests__/chatRecordReply.test.ts",
+                    "src/__tests__/chatRecordReplyMount.test.ts",
+                    "src/__tests__/chatMentions.test.ts",
+                    "src/__tests__/chatMailboxComponent.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatTransfer.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                ],
+            },
+            {
+                id: "chat.emoji",
+                label: { en: "Chat emoji", fr: "Émojis du clavardage" },
+                description: {
+                    en: "Emoji data from Odoo 18 in French and English, search, shortcode conversions and the most used behind the quick reaction bar.",
+                    fr: "Données d'émojis d'Odoo 18 en français et en anglais, recherche, conversions des codes courts et les plus utilisés derrière la barre de réactions rapides.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "scripts/convert-odoo-emoji.mjs, run once by hand, evaluates the template literals of Odoo "
+                        + "18's emoji_data.js with _t giving English, then fr.po's text, and writes emojiData.json "
+                        + "in source order. The app imports it on first use, as its own chunk. Uses are counted "
+                        + "in localStorage (chat.emoji.frequent, all accounts together); the bar starts from "
+                        + "👍 ❤️ 😂 😮 😢 🙏 and an emoji used three times or more takes the slot, from the end, "
+                        + "of one used less. The picker (chat_emoji_picker_component.ts) lists the most used, read "
+                        + "once per open as Odoo's recentSnapshot so a pick never moves the grid, then "
+                        + "the categories, with tabs and a search; its sections are drawn one per turn and skipped "
+                        + "by the browser out of view (content-visibility). The composer's 😊 button inserts a pick "
+                        + "at the caret and keeps it in the draft.",
+                    fr: "scripts/convert-odoo-emoji.mjs, lancé une fois à la main, évalue les gabarits de "
+                        + "emoji_data.js d'Odoo 18 avec _t donnant l'anglais, puis le texte de fr.po, et écrit "
+                        + "emojiData.json dans l'ordre de la source. L'application l'importe au premier usage, "
+                        + "dans son propre morceau. Les usages sont comptés dans localStorage "
+                        + "(chat.emoji.frequent, tous comptes confondus) ; la barre part de 👍 ❤️ 😂 😮 😢 🙏 et "
+                        + "un émoji utilisé trois fois ou plus prend la place, depuis la fin, d'un moins utilisé. Le sélecteur "
+                        + "(chat_emoji_picker_component.ts) liste les plus utilisés, lus une fois par ouverture "
+                        + "comme le recentSnapshot d'Odoo pour qu'un choix ne déplace jamais la grille, puis les "
+                        + "catégories, avec onglets "
+                        + "et recherche ; ses sections sont dessinées une par tour et ignorées par le navigateur "
+                        + "hors écran (content-visibility). Le bouton 😊 du composeur insère le choix au curseur "
+                        + "et le garde dans le brouillon.",
+                },
+                files: [
+                    "scripts/convert-odoo-emoji.mjs",
+                    "src/data/emojiData.json",
+                    "src/services/chat/chatEmoji.ts",
+                    "src/assets/licenses/unicode-cldr.LICENSE.txt",
+                    "src/components/chat/chat_emoji_picker_component.ts",
+                    "src/components/chat/chat_emoji_picker_component.scss",
+                ],
+                tests: ["src/__tests__/chatEmoji.test.ts", "src/__tests__/chatEmojiPicker.test.ts", "src/__tests__/chatEmojiPickerMount.test.ts"],
+            },
+            {
+                id: "chat.compose",
+                label: { en: "Chat message HTML", fr: "HTML des messages du clavardage" },
+                description: {
+                    en: "The message HTML of Odoo 18's browser composer, byte for byte: line breaks, links, emoticons, mentions and channel links; @ and # suggestions in the composer; mention chips and the edited mark shown.",
+                    fr: "Le HTML des messages du composeur d'Odoo 18 dans le navigateur, octet pour octet : sauts de ligne, liens, émoticônes, mentions et liens de canaux ; suggestions @ et # dans le composeur ; pastilles de mention et marque de modification affichées.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                howItWorks: {
+                    en: "chatCompose.ts ports prettifyMessageContent of Odoo's format.js on strings: escape and "
+                        + "compact, mentions (longest first, first place only), @everyone, emoji conversions, "
+                        + "then Odoo's URL regex with the WHATWG href. composer-golden.json, produced by Odoo's "
+                        + "own function in headless Chromium (long_test/mobile_sync_composer.py of ERPLibre), "
+                        + "pins every case. chatBody.ts renders mentions as chips by their data-oe-* and reads "
+                        + "a body back as text with <br> as line ends, as the browser does to edit it. "
+                        + "chatMentions.ts reads the @ or # word the caret ends and lists the cached members "
+                        + "(and the people cache in a public channel) at once, then merges the server's "
+                        + "get_mention_suggestions 250 ms after the last keystroke; a chat, a group or a "
+                        + "channel with an access group offers members only, as the browser does. A pick "
+                        + "is tracked by place (adjustPicks) and goes with the post while its text is whole. "
+                        + "mentionField.ts (MentionField) is the field's input, suggestions, picks and emoji "
+                        + "insertion, shared by the conversation's composer and the record reply's.",
+                    fr: "chatCompose.ts porte prettifyMessageContent du format.js d'Odoo sur des chaînes : "
+                        + "échappement et compactage, mentions (la plus longue d'abord, première place "
+                        + "seulement), @everyone, conversions d'émojis, puis l'expression d'URL d'Odoo avec "
+                        + "le href WHATWG. composer-golden.json, produit par la fonction même d'Odoo dans un "
+                        + "Chromium sans écran (long_test/mobile_sync_composer.py d'ERPLibre), fixe chaque "
+                        + "cas. chatBody.ts affiche les mentions en pastilles par leurs data-oe-* et relit un "
+                        + "corps en texte, <br> en fins de ligne, comme le navigateur pour le modifier. "
+                        + "chatMentions.ts lit le mot @ ou # que finit le curseur et liste aussitôt les "
+                        + "membres en cache (et le cache des personnes dans un canal public), puis fusionne "
+                        + "les get_mention_suggestions du serveur 250 ms après la dernière frappe ; une "
+                        + "conversation, un groupe ou un canal à groupe d'accès n'offre que ses membres, comme "
+                        + "le navigateur. Un choix est suivi par sa place (adjustPicks) et part avec le "
+                        + "message tant que son texte est entier. mentionField.ts (MentionField) est la saisie "
+                        + "du champ, ses suggestions, ses choix et l'insertion d'émojis, partagés par le "
+                        + "compositeur d'une conversation et celui d'une réponse sur une fiche.",
+                },
+                files: [
+                    "src/services/chat/chatCompose.ts",
+                    "src/services/chat/chatBody.ts",
+                    "src/services/chat/chatMentions.ts",
+                    "src/components/chat/chat_suggestions_component.ts",
+                    "src/components/chat/chat_suggestions_component.scss",
+                    "src/components/chat/mentionField.ts",
+                    "src/__tests__/fixtures/composer-cases.json",
+                    "src/__tests__/fixtures/composer-golden.json",
+                    "src/__tests__/fixtures/PROVENANCE.md",
+                ],
+                tests: [
+                    "src/__tests__/chatCompose.test.ts", "src/__tests__/replyBodyParity.test.ts", "src/__tests__/chatBody.test.ts", "src/__tests__/chatBodyNode.test.ts",
+                    "src/__tests__/chatMentions.test.ts", "src/__tests__/chatSuggestions.test.ts",
+                    "src/__tests__/mentionField.test.ts",
+                ],
+            },
+            {
+                id: "chat.people",
+                label: { en: "Chat people and channels", fr: "Personnes et canaux du clavardage" },
+                description: {
+                    en: "Recent people, server people search, public channels to join, invite candidates and access groups of a new channel.",
+                    fr: "Personnes récentes, recherche de personnes sur le serveur, canaux publics à rejoindre, candidats à l'invitation et groupes d'accès d'un nouveau canal.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatPeople.ts",
+                ],
+            },
+            {
+                id: "chat.module",
+                label: { en: "Chat server module", fr: "Module serveur du clavardage" },
+                description: {
+                    en: "Detects whether the idempotent-post module is installed, outdated, available, absent or unknown on a server, and installs or upgrades it for system users.",
+                    fr: "Détecte si le module d'envoi idempotent est installé, périmé, disponible, absent ou inconnu sur un serveur, et l'installe ou le met à jour pour les utilisateurs système.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatModule.ts",
+                    "src/components/applications/edit/applications_edit_component.ts",
+                ],
+            },
+            {
+                id: "chat.bus",
+                label: { en: "Odoo bus client", fr: "Client du bus Odoo" },
+                description: {
+                    en: "Subscribes to the Odoo 18 bus over a websocket transport, delivers frames, saves the last id and reconnects by close code.",
+                    fr: "S'abonne au bus d'Odoo 18 par un transport websocket, livre les trames, garde le dernier id et se reconnecte selon le code de fermeture.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatBus.ts",
+                ],
+            },
+            {
+                id: "chat.socket",
+                label: { en: "Native websocket", fr: "Websocket natif" },
+                description: {
+                    en: "OkHttp websocket plugin carrying the session cookie and the server's own Origin, with a transport adapter for the bus client.",
+                    fr: "Plugin websocket OkHttp portant le cookie de session et l'Origin propre du serveur, avec un adaptateur de transport pour le client du bus.",
+                },
+                status: "experimental",
+                demo: NONE_PLUMBING,
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/ChatSocketPlugin.java",
+                    "src/plugins/chatSocketPlugin.ts",
+                ],
+                tests: ["src/__tests__/chatSocketPlugin.test.ts"],
+            },
+            {
+                id: "chat.attachments",
+                label: { en: "Chat attachments", fr: "Pièces jointes du clavardage" },
+                description: {
+                    en: "The composer's 📎 (camera, gallery or any file, the server's limit shown) and 🎤, capture from the camera, the gallery or any file, voice messages recorded as MP3, streamed file upload and download with the session, the app's chat file layout, the CSRF token of the upload routes, and the cache of previews and originals.",
+                    fr: "Le 📎 du composeur (appareil photo, galerie ou fichier, la limite du serveur affichée) et son 🎤, capture par l'appareil photo, la galerie ou tout fichier, messages vocaux enregistrés en MP3, envoi et téléchargement de fichiers en flux avec la session, l'arborescence des fichiers du clavardage, le jeton CSRF des routes d'envoi et le cache des aperçus et des originaux.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A native OkHttp plugin streams a multipart upload from a file and a download to a "
+                        + "« .part » file renamed when complete, so a file is never whole in JS memory; it only "
+                        + "touches files under the app's chat directory. The CSRF token is read from the login "
+                        + "page and kept per session. An expired session reads as 404 on these public routes: "
+                        + "the app logs in again, takes a new token and tries once more. Files live under "
+                        + "chat/<random id of the account>/ (out, files, thumbs). Previews load two at a time, "
+                        + "the newest first, whatever the network; an original downloads on open, its SHA-1 "
+                        + "checked, and waits for Wi-Fi when « Wi-Fi only » is on unless downloaded anyway. "
+                        + "The purge (off by default) frees the least recently opened originals, then previews; "
+                        + "files waiting to be sent are never touched. Picks go through the web view's own file "
+                        + "input: its camera chooser hands over the camera app's file untouched, named "
+                        + "IMG_<date>.jpg; each pick is copied by chunks under out/<uuid>/, refused first when "
+                        + "over the server's limit. A HEIC becomes a JPEG (quality 92) on the phone; « compress » "
+                        + "fits a photo to 1920 px at quality 80. A voice message is recorded as AAC, decoded by the "
+                        + "web view, then encoded in a worker by lamejs as the MP3 Odoo's browser makes (mono, "
+                        + "128 kbit/s, Voice-<date>-<n>.mp3, voice=true); it stops by itself at 60 s, and when the "
+                        + "app goes to the background it stops and stays unsent. In the composer, each pick is "
+                        + "staged one after another and shown as a chip (name, size, ✕ deletes the staged file); a "
+                        + "tap on 🎤 starts, the countdown shows the time left, a second tap stops and sends with "
+                        + "the text and the chips, ✕ discards; « ask to compress » asks before sending a camera or "
+                        + "gallery photo. One recorder serves the whole app.",
+                    fr: "Un plugin natif OkHttp envoie en flux un formulaire multipart lu d'un fichier et "
+                        + "télécharge vers un fichier « .part » renommé une fois complet, donc un fichier n'est "
+                        + "jamais entier en mémoire JS ; il ne touche que les fichiers du répertoire de "
+                        + "clavardage de l'application. Le jeton CSRF est lu de la page de connexion et gardé par "
+                        + "session. Une session expirée se lit comme un 404 sur ces routes publiques : "
+                        + "l'application se reconnecte, prend un nouveau jeton et réessaie une fois. Les "
+                        + "fichiers vivent sous chat/<id aléatoire du compte>/ (out, files, thumbs). Les aperçus "
+                        + "se chargent deux à la fois, le plus récent d'abord, quel que soit le réseau ; un "
+                        + "original se télécharge à l'ouverture, son SHA-1 vérifié, et attend le Wi-Fi quand "
+                        + "« Wi-Fi seulement » est actif, sauf téléchargement forcé. La purge (inactive par "
+                        + "défaut) libère les originaux ouverts le moins récemment, puis les aperçus ; les "
+                        + "fichiers en attente d'envoi ne sont jamais touchés. Les choix passent par le champ "
+                        + "fichier de la vue web : son sélecteur d'appareil photo remet le fichier de l'application "
+                        + "photo intact, nommé IMG_<date>.jpg ; chaque choix est copié par morceaux sous "
+                        + "out/<uuid>/, refusé d'abord s'il dépasse la limite du serveur. Un HEIC devient un JPEG "
+                        + "(qualité 92) sur le téléphone ; « compresser » ramène une photo à 1920 px en qualité 80. "
+                        + "Un message vocal s'enregistre en AAC, se décode par la vue web, puis lamejs l'encode dans "
+                        + "un worker en MP3 comme le fait le navigateur d'Odoo (mono, 128 kbit/s, "
+                        + "Voice-<date>-<n>.mp3, voice=true) ; il s'arrête seul à 60 s et, quand l'application passe "
+                        + "en arrière-plan, il s'arrête et reste non envoyé. Dans le composeur, chaque choix est "
+                        + "préparé l'un après l'autre et montré comme une puce (nom, taille, ✕ supprime le fichier "
+                        + "préparé) ; un toucher sur 🎤 démarre, le compte à rebours montre le temps restant, un "
+                        + "second toucher arrête et envoie avec le texte et les puces, ✕ abandonne ; « demander de "
+                        + "compresser » pose la question avant d'envoyer une photo de l'appareil ou de la galerie. "
+                        + "Un seul enregistreur sert toute l'application.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "android/app/src/main/java/ca/erplibre/home/ChatFileTransfer.java",
+                    "android/app/src/main/java/ca/erplibre/home/ChatFilePlugin.java",
+                    "src/plugins/chatFilePlugin.ts",
+                    "src/services/chat/chatFiles.ts",
+                    "src/services/chat/chatCsrf.ts",
+                    "src/services/chat/chatTransfer.ts",
+                    "src/services/chat/chatAttachmentCache.ts",
+                    "src/services/chat/chatCapture.ts",
+                    "src/services/chat/chatVoice.ts",
+                    "src/services/chat/chatMp3.ts",
+                    "src/services/chat/chatMp3Worker.ts",
+                    "android/app/src/main/java/ca/erplibre/home/ChatImageSize.java",
+                    "src/testing/chatFakes.ts",
+                    "src/components/chat/chat_composer_attach_component.ts",
+                    "src/components/chat/chat_composer_attach_component.scss",
+                    "src/utils/formatBytes.ts",
+                ],
+                tests: [
+                    "android/app/src/test/java/ca/erplibre/home/ChatFileTransferTest.java",
+                    "src/__tests__/chatFilePlugin.test.ts",
+                    "src/__tests__/chatFiles.test.ts",
+                    "src/__tests__/chatCsrf.test.ts",
+                    "src/__tests__/chatTransfer.test.ts",
+                    "src/__tests__/chatAttachmentCache.test.ts",
+                    "src/__tests__/chatCapture.test.ts",
+                    "src/__tests__/chatVoice.test.ts",
+                    "src/__tests__/chatMp3.test.ts",
+                    "android/app/src/test/java/ca/erplibre/home/ChatImageSizeTest.java",
+                    "src/__tests__/chatComposerAttach.test.ts",
+                    "src/__tests__/formatBytes.test.ts",
+                ],
+            },
+            {
+                id: "chat.attachment-view",
+                label: { en: "Attachments in the thread", fr: "Pièces jointes dans la conversation" },
+                description: {
+                    en: "A message's images as a grid with a full-screen viewer, voice messages and audio in a player, other files opened with another app, with transfer progress, cancel and « download anyway ».",
+                    fr: "Les images d'un message en grille avec une visionneuse plein écran, les messages vocaux et l'audio dans un lecteur, les autres fichiers ouverts avec une autre application, avec la progression, l'annulation et « Télécharger quand même ».",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The thread reads the files of the shown messages in one query and keeps them in "
+                        + "ThreadAttachments; each file's state (sending, waiting for Wi-Fi, refused, "
+                        + "downloading, failed preview, on the phone, not yet) is computed from memory, and "
+                        + "the rows are rendered again only when that state, the progress or the local file "
+                        + "changes. Progress is polled every 250 ms while bytes flow, every second while a "
+                        + "file waits to start, never otherwise. Previews are asked only for rows on screen "
+                        + "(IntersectionObserver), the cache running two at a time; a failed one is a "
+                        + "tap-to-retry placeholder. A file still on its way shows its own copy. One image is "
+                        + "a 240 px box, several are 75 px tiles; a tap opens the viewer (the preview at "
+                        + "once, then the original). Voice and audio play in an <audio> once the original is "
+                        + "on the phone (its source set once, never by a render). Other files open through Android's « open with » chooser as a "
+                        + "FileProvider content: URI with a read grant. Originals follow « Wi-Fi only »; a "
+                        + "held file offers « download anyway » for itself alone. The list previews a message "
+                        + "with only files as 🎤, 🖼️ or 📎 with its name.",
+                    fr: "La conversation lit les fichiers des messages affichés en une requête et les garde "
+                        + "dans ThreadAttachments ; l'état de chaque fichier (envoi, attente du Wi-Fi, refus, "
+                        + "téléchargement, aperçu échoué, sur le téléphone, pas encore) se calcule en mémoire, "
+                        + "et les lignes ne sont rendues à nouveau que si cet état, la progression ou le "
+                        + "fichier local change. La progression est relue toutes les 250 ms pendant qu'un "
+                        + "transfert avance, chaque seconde pendant qu'un fichier attend de partir, jamais "
+                        + "sinon. Les aperçus ne sont demandés que pour les lignes à l'écran "
+                        + "(IntersectionObserver), le cache en charge deux à la fois ; un aperçu échoué se "
+                        + "réessaie d'un toucher. Un fichier encore en route montre sa propre copie. Une image "
+                        + "seule tient dans un carré de 240 px, plusieurs font des tuiles de 75 px ; un toucher ouvre la "
+                        + "visionneuse (l'aperçu tout de suite, puis l'original). Les messages vocaux et "
+                        + "l'audio jouent dans un <audio> une fois l'original sur le téléphone (sa source posée une "
+                        + "fois, jamais par un rendu). Les autres "
+                        + "fichiers s'ouvrent par le sélecteur « Ouvrir avec » d'Android, en URI content: du "
+                        + "FileProvider avec un droit de lecture. Les originaux suivent « Wi-Fi seulement » ; "
+                        + "un fichier retenu offre « Télécharger quand même » pour lui seul. La liste résume un "
+                        + "message fait seulement de fichiers par 🎤, 🖼️ ou 📎 et son nom.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/components/chat/chat_attachments_component.ts",
+                    "src/components/chat/chat_attachments_component.scss",
+                    "src/components/chat/chat_image_viewer_component.ts",
+                    "src/components/chat/chat_image_viewer_component.scss",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/services/chat/chatBody.ts",
+                    "src/plugins/chatFilePlugin.ts",
+                    "android/app/src/main/java/ca/erplibre/home/ChatFilePlugin.java",
+                    "android/app/src/main/res/xml/file_paths.xml",
+                ],
+                tests: [
+                    "src/__tests__/chatAttachmentsComponent.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatBody.test.ts",
+                ],
+            },
+            {
+                id: "chat.attachment-cache",
+                label: { en: "Attachment cache", fr: "Cache des pièces jointes" },
+                description: {
+                    en: "Space used by the chat files, clearing, an optional purge with a limit in MB and a warning near it, and the question asked before compressing photos.",
+                    fr: "Espace pris par les fichiers du clavardage, vidage, purge facultative avec une limite en Mo et un avertissement à l'approche, et la question posée avant de compresser les photos.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Options › Chat shows every chat byte of the phone (files waiting to be sent "
+                        + "included), « Remove all downloaded files » removes the downloaded files of every conversation, and "
+                        + "the conversation's information screen does the same for one. Files not sent yet "
+                        + "are kept. The purge is off until the user turns it on; its limit is typed in MB "
+                        + "(2048 by default; 0, negative or not a number is refused). On, it runs when the "
+                        + "app comes to the foreground and at most once a day, removing the originals "
+                        + "opened least recently, then the previews, until the files are back under the "
+                        + "limit. At 80 % of the limit the options and the conversation list warn, the list "
+                        + "reading it once per rebuild, not per render. Deleting an application erases its "
+                        + "chat and the confirmation counts the messages and files not sent yet.",
+                    fr: "Options › Clavardage montre chaque octet du clavardage sur le téléphone (fichiers en "
+                        + "attente d'envoi compris), « Retirer tous les fichiers téléchargés » retire les fichiers téléchargés de "
+                        + "toutes les conversations, et l'écran d'information d'une conversation fait de "
+                        + "même pour elle seule. Les fichiers pas encore envoyés sont gardés. La purge est "
+                        + "éteinte jusqu'à ce que l'utilisateur l'allume ; sa limite se tape en Mo (2048 "
+                        + "par défaut ; 0, négatif ou pas un nombre est refusé). Allumée, elle passe quand "
+                        + "l'application revient au premier plan et au plus une fois par jour, retirant les "
+                        + "originaux ouverts le moins récemment, puis les aperçus, jusqu'à repasser sous la "
+                        + "limite. À 80 % de la limite, les options et la liste des conversations avertissent, "
+                        + "la liste le lisant à chaque reconstruction, non à chaque rendu. Supprimer une "
+                        + "application efface son clavardage et la confirmation compte les messages et "
+                        + "fichiers pas encore envoyés.",
+                },
+                demo: { kind: "options", sectionId: "chat" },
+                files: [
+                    "src/components/options/chat/options_chat_component.ts",
+                    "src/components/options/chat/options_chat_component.scss",
+                    "src/components/chat/chat_info_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                    "src/components/applications/applications_component.ts",
+                    "src/services/chat/chatLifecycle.ts",
+                    "src/services/chat/chatAttachmentCache.ts",
+                    "src/services/chat/chatSettings.ts",
+                ],
+                tests: [
+                    "src/__tests__/optionsChatComponent.test.ts",
+                    "src/__tests__/chatInfoComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/chatLifecycle.test.ts",
+                    "src/__tests__/applicationsDelete.test.ts",
+                    "src/__tests__/chatAttachmentCache.test.ts",
+                ],
+            },
+            {
+                id: "chat.outbox",
+                label: { en: "Chat outbox", fr: "Boîte d'envoi du clavardage" },
+                description: {
+                    en: "Queued posts, reads, conversation creates and joins, sent once even when an answer is lost, apart from the note sync.",
+                    fr: "Envois, lectures, créations de conversations et adhésions en file, faits une seule fois même si une réponse se perd, à part de la synchro des notes.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A post is stored as a pending message and an outbox row before any request. "
+                        + "With the server module the client uuid travels in the post and the server "
+                        + "answers a repeat with the message it holds; without it the body ends with "
+                        + "a hidden comment that a retry searches for and adopts. Posts of one channel "
+                        + "wait for each other; reads merge to the highest message id. A conversation "
+                        + "created offline lives under a negative temporary id, swapped for the server's "
+                        + "when its create settles; posts written into it wait for the create. A lost "
+                        + "create is found again by the module's uuid, or else by a fingerprint search "
+                        + "(creator, type, name or members, creation date window); two matches hold it. "
+                        + "A refused create stays listed as failed, its texts readable, until dismissed. "
+                        + "A post's files upload just before it, one op each, two per account at a time "
+                        + "beside the other ops: a long upload holds only its own conversation. A lost "
+                        + "upload answer is found again by the module's uuid, or else by the user's own "
+                        + "pending attachment of that name and size; « Wi-Fi only » holds uploads; a file "
+                        + "refused (too big, missing) leaves with a notice and the post goes without it. "
+                        + "Once posted, the sender's file becomes the conversation's cached copy. "
+                        + "An edit or a delete of one's own message shows at once; an edit of a message "
+                        + "not sent yet rewrites its post, a delete of it cancels the post and its files. "
+                        + "An edit is made against the body read when it was queued: the module 1.3 "
+                        + "writes only over that body's fingerprint, without it the body is read again "
+                        + "just before; a newer body refuses the edit and its notice keeps the text "
+                        + "for « Resume ».",
+                    fr: "Un envoi est gardé comme message en attente et ligne de la boîte d'envoi "
+                        + "avant toute requête. Avec le module serveur, l'uuid du client voyage dans "
+                        + "l'envoi et le serveur répond à une répétition par le message qu'il détient ; "
+                        + "sans lui, le corps se termine par un commentaire caché qu'un nouvel essai "
+                        + "cherche et adopte. Les envois d'un canal s'attendent ; les lectures "
+                        + "fusionnent vers le plus haut id de message. Une conversation créée hors "
+                        + "ligne vit sous un id temporaire négatif, remplacé par celui du serveur quand "
+                        + "sa création aboutit ; les envois écrits dedans attendent la création. Une "
+                        + "création perdue se retrouve par l'uuid du module, sinon par une recherche "
+                        + "d'empreinte (créateur, type, nom ou membres, plage de date de création) ; "
+                        + "deux correspondances la retiennent. Une création refusée reste listée en "
+                        + "échec, ses textes lisibles, jusqu'à ce qu'on la retire. Les fichiers d'un "
+                        + "envoi partent juste avant lui, une opération chacun, deux par compte à la fois "
+                        + "à côté des autres opérations : un long envoi ne retient que sa conversation. "
+                        + "Une réponse d'envoi perdue se retrouve par l'uuid du module, sinon par la pièce "
+                        + "jointe en attente de l'utilisateur de même nom et taille ; « Wi-Fi seulement » "
+                        + "retient les envois ; un fichier refusé (trop gros, absent) part avec un avis et "
+                        + "le message part sans lui. Une fois envoyé, le fichier de l'expéditeur devient la "
+                        + "copie en cache de la conversation. Une modification ou une suppression de "
+                        + "son propre message s'affiche tout de suite ; modifier un message pas encore "
+                        + "envoyé réécrit son envoi, le supprimer annule l'envoi et ses fichiers. Une "
+                        + "modification vaut contre le corps lu à sa mise en file : le module 1.3 n'écrit "
+                        + "que sur l'empreinte de ce corps, sans lui le corps est relu juste avant ; un "
+                        + "corps plus récent refuse la modification et son avis garde le texte pour "
+                        + "« Reprendre ».",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/outboxMarker.ts",
+                ],
+            },
+            {
+                id: "chat.manage",
+                label: { en: "Conversation management", fr: "Gestion des conversations" },
+                description: {
+                    en: "Invite, rename, describe, leave, hide, mute (one conversation or all), remove a member, list the members: queued offline, shown at once.",
+                    fr: "Inviter, renommer, décrire, quitter, masquer, mettre en sourdine (une conversation ou toutes), retirer un membre, lister les membres : en file hors ligne, visibles tout de suite.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Each action is a target state in the chat outbox: one row per conversation and "
+                        + "kind waits, a later call writes its value into it, and the phone shows the "
+                        + "value at once (a load keeps it until it is sent). An action waits for the "
+                        + "create of a conversation made offline. A mute leaves with the minutes left at "
+                        + "send time, so one queued past its end unmutes. Leaving cancels what the "
+                        + "conversation still had queued; its texts turn failed and keep it listed as "
+                        + "left until dismissed. An action refused, or whose conversation is gone, stays "
+                        + "as a notice in the list. Members are paged from the server and cached.",
+                    fr: "Chaque action est un état visé dans la boîte d'envoi du clavardage : une ligne "
+                        + "par conversation et par sorte attend, un appel suivant y écrit sa valeur, et "
+                        + "le téléphone affiche la valeur tout de suite (un chargement la garde jusqu'à "
+                        + "l'envoi). Une action attend la création d'une conversation faite hors ligne. "
+                        + "Une sourdine part avec les minutes qui restent au moment de l'envoi : en "
+                        + "file au-delà de sa fin, elle la retire. Quitter annule ce que la conversation "
+                        + "avait encore en file ; ses textes passent en échec et la gardent listée comme "
+                        + "quittée jusqu'à ce qu'on la retire. Une action refusée, ou dont la "
+                        + "conversation n'existe plus, reste comme avis dans la liste. Les membres sont "
+                        + "lus du serveur page par page et mis en cache.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+            },
+            {
+                id: "chat.service",
+                label: { en: "Chat service", fr: "Service de clavardage" },
+                description: {
+                    en: "Chat sources, conversations and unread total, progressive history, sending, read, typing and bus deliveries.",
+                    fr: "Sources du clavardage, conversations et total non lu, historique progressif, envoi, lecture, saisie et livraisons du bus.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A chat source is an application on Odoo 18, asked once when its version is unknown. "
+                        + "Loading reads the session, then /mail/data, then the module state. History pages "
+                        + "always use around, so fetching never clears mentions. Posts and reads go through "
+                        + "the chat outbox; typing is throttled and never queued. A bus notification moves a "
+                        + "counter only when its bus id is above the last one applied, starting from the one "
+                        + "/mail/data reports.",
+                    fr: "Une source de clavardage est une application sur Odoo 18, interrogée une fois quand "
+                        + "sa version est inconnue. Le chargement lit la session, puis /mail/data, puis l'état "
+                        + "du module. Les pages d'historique utilisent toujours around, la lecture n'efface "
+                        + "donc jamais les mentions. Envois et lectures passent par la boîte d'envoi du "
+                        + "clavardage ; la saisie est espacée et jamais mise en file. Une notification du bus "
+                        + "ne change un compteur que si son id de bus dépasse le dernier appliqué, à partir de "
+                        + "celui que donne /mail/data.",
+                },
+                demo: NONE_PLUMBING,
+                files: [
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatLifecycle.ts",
+                ],
+            },
+            {
+                id: "chat.list",
+                label: { en: "Conversation list", fr: "Liste des conversations" },
+                description: {
+                    en: "Home tile with the unread badge and the mixed conversation list of every chat server.",
+                    fr: "Tuile d'accueil avec le badge de non lus et liste mixte des conversations de tous les serveurs.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The list renders from the cache with the sources decided offline, then each server is "
+                        + "read in the background and the list is rebuilt when the chat cache changes. With one "
+                        + "server no choice is shown, with two to four chips, with five or more a dropdown. A "
+                        + "row previews the newest message with text or a file, as Odoo's: an emptied one, or one "
+                        + "whose delete is queued, is skipped.",
+                    fr: "La liste s'affiche depuis le cache, les sources étant décidées hors ligne, puis chaque "
+                        + "serveur est lu en arrière-plan et la liste est refaite quand le cache change. Avec un "
+                        + "serveur aucun choix n'est montré, avec deux à quatre des pastilles, avec cinq ou plus "
+                        + "une liste déroulante. Une ligne montre le plus récent message avec du texte ou un "
+                        + "fichier, comme Odoo : un message vidé, ou dont la suppression est en file, est sauté.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/components/chat/chat_list_component.ts",
+                    "src/components/chat/chat_list_component.scss",
+                ],
+                tests: ["src/__tests__/chatListComponent.test.ts"],
+            },
+            {
+                id: "chat.search",
+                label: { en: "Chat search", fr: "Recherche du clavardage" },
+                description: {
+                    en: "Search from the list's field: conversations, people, messages, files and the inbox and starred items cached on the phone, then the servers' messages, people and channels to join.",
+                    fr: "Recherche depuis le champ de la liste : conversations, personnes, messages, fichiers et éléments de la boîte de réception et des favoris gardés sur le téléphone, puis les messages, personnes et canaux à joindre des serveurs.",
+                },
+                status: "experimental",
+                dependsOn: ["chat.list", "chat.people"],
+                howItWorks: {
+                    en: "From two characters typed (accents and case ignored), the phone searches 200 ms after the "
+                        + "last key and the results replace the rows. Messages and mailbox items are a LIKE over "
+                        + "their folded text, the words of the term in order, % and _ literal; the FTS5 trigram "
+                        + "index narrows the messages first where SQLite has it. Files match by name, "
+                        + "conversations by their display name, people from the cache. Online, each server is then "
+                        + "asked a page of 30 over the user's member channels only (module 1.4 route, else a "
+                        + "search_read whose body term is HTML-escaped). Both match the stored HTML, so a message is "
+                        + "kept only when its shown text, a file's name or its subject holds the term (never the "
+                        + "client marker nor a link's address); the next page starts past the ones left out, and the "
+                        + "server's count shows only while none was. The hits merge once per message after the "
+                        + "phone's, with « More results »; nothing is marked read. A hit opens its conversation at "
+                        + "the message, paging older history with `around` when needed; reaching the bottom marks "
+                        + "nothing read while it loads.",
+                    fr: "Dès deux caractères tapés (sans accents ni casse), le téléphone cherche 200 ms après la "
+                        + "dernière touche et les résultats remplacent les lignes. Messages et éléments de la "
+                        + "boîte sont un LIKE sur leur texte replié, les mots du terme dans l'ordre, % et _ "
+                        + "littéraux ; l'index FTS5 trigramme restreint d'abord les messages là où SQLite l'a. "
+                        + "Les fichiers se trouvent par leur nom, les conversations par leur nom affiché, les "
+                        + "personnes depuis le cache. En ligne, chaque serveur est ensuite interrogé par pages de 30 "
+                        + "sur les seuls canaux dont l'utilisateur est membre (route du module 1.4, sinon un "
+                        + "search_read dont le terme du corps est échappé en HTML). Les deux cherchent dans le HTML "
+                        + "stocké : un message n'est gardé que si son texte affiché, le nom d'un fichier ou son sujet "
+                        + "contient le terme (jamais le marqueur client ni l'adresse d'un lien) ; la page suivante "
+                        + "part après ceux écartés, et le nombre du serveur ne s'affiche que tant qu'aucun ne l'a été. "
+                        + "Les résultats se fusionnent une fois par message après ceux du téléphone, avec « Plus de "
+                        + "résultats » ; rien n'est marqué lu. Un résultat ouvre sa conversation au message, en "
+                        + "chargeant l'historique plus ancien avec `around` au besoin ; atteindre le bas pendant ce "
+                        + "chargement ne marque rien lu.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/services/chat/chatSearch.ts",
+                    "src/components/chat/chat_search_results_component.ts",
+                    "src/components/chat/chat_search_results_component.scss",
+                ],
+                tests: ["src/__tests__/chatSearch.test.ts", "src/__tests__/chatSearchResults.test.ts"],
+            },
+            {
+                id: "chat.thread",
+                label: { en: "Conversation screen", fr: "Écran de conversation" },
+                description: {
+                    en: "Bubbles with read marks, « (edited) », reply quotes and mention links, pending and failed posts with retry, typing line, history paging and composer.",
+                    fr: "Bulles avec accusés de lecture, « (modifié) », citations de réponse et liens de mention, envois en attente ou échoués avec réessai, ligne « écrit… », historique paginé et zone de saisie.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The screen renders the newest 100 cached messages and refreshes when its conversation "
+                        + "changes. Bodies go through the whitelisting renderer; scrolling to the top renders more "
+                        + "from the cache, then pages the history in from the server. Reaching the bottom, or a new "
+                        + "message with the bottom in view, marks the conversation read; every send is queued in "
+                        + "the outbox first. As the browser, a message emptied with no file left, or whose delete "
+                        + "is queued, is hidden, and an edited one ends with « (edited) ». A reply quotes its "
+                        + "parent (author, start of the text, or the files, or « Original message was deleted »), "
+                        + "read from the cache even below the loaded history, which never shows it as a row; a tap "
+                        + "scrolls to the original when it is rendered. A tap on a mention opens the direct "
+                        + "message, on a channel link the conversation, after a join confirmation for a channel "
+                        + "the user is not a member of.",
+                    fr: "L'écran affiche les 100 messages les plus récents du cache et se rafraîchit quand sa "
+                        + "conversation change. Les corps passent par le rendu à liste blanche; remonter en haut "
+                        + "en affiche davantage depuis le cache, puis charge l'historique du serveur. Atteindre le "
+                        + "bas, ou un nouveau message avec le bas visible, marque la conversation lue; chaque envoi "
+                        + "passe d'abord par la file. Comme le navigateur, un message vidé sans fichier restant, ou "
+                        + "dont la suppression est en file, est masqué, et un message modifié finit par "
+                        + "« (modifié) ». Une réponse cite son parent (auteur, début du texte, ou les fichiers, ou "
+                        + "« Message d'origine supprimé »), lu du cache même sous l'historique chargé, qui ne le "
+                        + "montre jamais en ligne; toucher la citation fait défiler jusqu'à l'original s'il est "
+                        + "affiché. Toucher une mention ouvre le message direct, un lien de canal la conversation, "
+                        + "après confirmation pour rejoindre un canal dont l'utilisateur n'est pas membre.",
+                },
+                demo: {
+                    kind: "none",
+                    reason: {
+                        en: "Opened from a row of the conversation list.",
+                        fr: "S'ouvre depuis une ligne de la liste des conversations.",
+                    },
+                },
+                files: [
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_thread_component.scss",
+                ],
+                tests: ["src/__tests__/chatThreadComponent.test.ts"],
+            },
+            {
+                id: "chat.drafts",
+                label: { en: "Conversation drafts", fr: "Brouillons des conversations" },
+                description: {
+                    en: "Each conversation keeps the text typed and the files not sent yet (photos, voice messages) until they are sent or removed, across leaving the screen and restarting the app.",
+                    fr: "Chaque conversation garde le texte tapé et les fichiers pas encore envoyés (photos, messages vocaux) jusqu'à leur envoi ou leur retrait, même en quittant l'écran ou en redémarrant l'application.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The text is stored 500 ms after the last keystroke, and at once when the screen closes or "
+                        + "the app goes to the background (table chat_drafts, one row per conversation). Each staged "
+                        + "file becomes a chat_attachments row in the « draft » state, with its origin (camera, gallery, "
+                        + "file, voice: a camera or gallery photo is offered compression even after a restart), before "
+                        + "its chip shows; ✕ removes the row and the file. A recording under way when the screen closes "
+                        + "is stopped and kept as a draft voice file. A send stores its text at the tap and locks the "
+                        + "composer until the post is queued; the outbox gives the draft rows to the post in place "
+                        + "(same row, same file) and, once its message is stored, removes exactly that text from the "
+                        + "draft (finished at startup after a kill). A send that cannot be queued, or a post cut by a "
+                        + "kill before its message was stored, leaves the text and gives the files back to the draft. "
+                        + "The purge, the clear and the startup sweeps never touch a draft file; the space "
+                        + "counts it. The list shows « Draft: » in place of the last message, a temporary id hands its "
+                        + "draft to the server's id, and a dropped conversation or account releases its draft files. "
+                        + "The draft also keeps the message the text answers, an edit in progress with its text, "
+                        + "and the mention picks (migration 2026102608); a post takes its reply target out with "
+                        + "its text, a queued edit ends the draft's edit; the list reads « Editing… » for an edit "
+                        + "in progress.",
+                    fr: "Le texte s'enregistre 500 ms après la dernière frappe, et aussitôt quand l'écran se ferme ou "
+                        + "que l'application passe en arrière-plan (table chat_drafts, une ligne par conversation). "
+                        + "Chaque fichier préparé devient une ligne chat_attachments à l'état « draft », avec son "
+                        + "origine (appareil photo, galerie, fichier, vocal : une photo de l'appareil ou de la galerie "
+                        + "se voit offrir la compression même après un redémarrage), avant que sa puce s'affiche ; ✕ "
+                        + "retire la ligne et le fichier. Un enregistrement en cours quand l'écran se ferme est arrêté "
+                        + "et gardé comme message vocal du brouillon. Un envoi enregistre son texte dès le toucher et "
+                        + "verrouille le composeur jusqu'à la mise en file ; la file donne les lignes du brouillon au "
+                        + "message sur place (même ligne, même fichier) et, une fois le message enregistré, retire "
+                        + "exactement ce texte du brouillon (terminé au démarrage après un arrêt brutal). Un envoi qui "
+                        + "ne peut être mis en file, ou un message coupé avant d'être enregistré, laisse le texte et "
+                        + "rend les fichiers au brouillon. La purge, "
+                        + "le vidage et les nettoyages au démarrage ne touchent jamais un fichier de brouillon ; "
+                        + "l'espace le compte. La liste montre « Brouillon : » à la place du dernier message, un "
+                        + "identifiant temporaire passe son brouillon à l'identifiant du serveur, et une conversation "
+                        + "ou un compte retiré libère les fichiers de son brouillon. Le brouillon garde aussi le "
+                        + "message auquel le texte répond, une modification en cours avec son texte, et les "
+                        + "mentions choisies (migration 2026102608) ; un envoi retire sa cible de réponse avec son "
+                        + "texte, une modification mise en file termine celle du brouillon ; la liste affiche "
+                        + "« Modification en cours » pour une modification en cours.",
+                },
+                demo: { kind: "route", url: "/chat" },
+                files: [
+                    "src/services/chat/chatDraft.ts",
+                    "src/services/chat/chatRepository.ts",
+                    "src/services/chat/chatOutbox.ts",
+                    "src/services/chat/chatService.ts",
+                    "src/services/chat/chatBody.ts",
+                    "src/services/migrations/addChatDrafts.ts",
+                    "src/services/migrations/addChatDraftOrigin.ts",
+                    "src/services/migrations/addChatDraftModes.ts",
+                    "src/components/chat/chat_composer_attach_component.ts",
+                    "src/components/chat/chat_thread_component.ts",
+                    "src/components/chat/chat_list_component.ts",
+                ],
+                tests: [
+                    "src/__tests__/chatDraft.test.ts",
+                    "src/__tests__/chatRepository.test.ts",
+                    "src/__tests__/chatOutbox.test.ts",
+                    "src/__tests__/chatAttachmentCache.test.ts",
+                    "src/__tests__/chatService.test.ts",
+                    "src/__tests__/chatComposerAttach.test.ts",
+                    "src/__tests__/chatThreadComponent.test.ts",
+                    "src/__tests__/chatListComponent.test.ts",
+                    "src/__tests__/applicationsDelete.test.ts",
+                ],
+            },
+            {
+                id: "chat.new",
+                label: { en: "New conversation", fr: "Nouvelle conversation" },
+                description: {
+                    en: "Pick a server, then write to a person, create a group or a channel, or join a public channel.",
+                    fr: "Choisir un serveur, puis écrire à une personne, créer un groupe ou un canal, ou rejoindre un canal public.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "The server is the list's filter, else the last one used here, else the first. Recent "
+                        + "people come from the cache; a typed term asks the server after 300 ms. One person "
+                        + "picked is a direct message, two or more a group. A channel needs a name and takes "
+                        + "Odoo's default access group unless changed. Every action is queued and opens the "
+                        + "thread, whose id may still be temporary.",
+                    fr: "Le serveur est le filtre de la liste, sinon le dernier utilisé ici, sinon le premier. "
+                        + "Les personnes récentes viennent du cache ; un terme tapé interroge le serveur après "
+                        + "300 ms. Une personne choisie donne un message direct, deux ou plus un groupe. Un "
+                        + "canal exige un nom et prend le groupe d'accès par défaut d'Odoo sauf changement. "
+                        + "Chaque action est mise en file et ouvre la conversation, dont l'id peut être provisoire.",
+                },
+                demo: { kind: "route", url: "/chat/new" },
+                files: [
+                    "src/components/chat/chat_new_component.ts",
+                    "src/components/chat/chat_new_component.scss",
+                ],
+                tests: ["src/__tests__/chatNewComponent.test.ts"],
+            },
+            {
+                id: "chat.info",
+                label: { en: "Conversation info", fr: "Infos de la conversation" },
+                description: {
+                    en: "Name, description, members with presence, invite, remove, mute, Odoo's setting of a channel, leave or hide, and giving up a blocked create.",
+                    fr: "Nom, description, membres avec présence, invitation, retrait, sourdine, réglage d'Odoo d'un canal, départ ou masquage, et abandon d'une création bloquée.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "Opened from the thread header. Rename follows Odoo per type: a channel never to empty, a "
+                        + "group to empty shows its members' names, a chat sets the user's own label. Leave is "
+                        + "offered as Odoo's canLeave and always asks; a direct message is hidden without asking. "
+                        + "Removing a member needs a system user and the server module 1.1. Mute offers 15 min to "
+                        + "until turned back on and is hidden while the global mute is active. A channel offers "
+                        + "Odoo's notification setting (default, all, mentions, nothing); a chat or a group offers "
+                        + "mute only, since Odoo ignores the setting there. A create blocked as "
+                        + "ambiguous can be cancelled.",
+                    fr: "S'ouvre depuis l'en-tête de la conversation. Le renommage suit Odoo selon le type : un "
+                        + "canal jamais à vide, un groupe à vide montre les noms des membres, un message direct "
+                        + "fixe le libellé propre à l'utilisateur. Quitter est offert comme le canLeave d'Odoo et "
+                        + "demande toujours confirmation ; un message direct se masque sans confirmation. Retirer "
+                        + "un membre exige un utilisateur système et le module serveur 1.1. La sourdine va de 15 min "
+                        + "à jusqu'à réactivation et se cache sous la sourdine globale. Un canal offre le réglage "
+                        + "de notification d'Odoo (par défaut, tout, mentions, rien) ; une discussion ou un groupe "
+                        + "n'offre que la sourdine, Odoo y ignorant le réglage. Une création bloquée comme "
+                        + "ambiguë peut être annulée.",
+                },
+                demo: {
+                    kind: "none",
+                    reason: {
+                        en: "Opened from the header of a conversation.",
+                        fr: "S'ouvre depuis l'en-tête d'une conversation.",
+                    },
+                },
+                files: [
+                    "src/components/chat/chat_info_component.ts",
+                    "src/components/chat/chat_info_component.scss",
+                ],
+                tests: ["src/__tests__/chatInfoComponent.test.ts"],
+            },
+            {
+                id: "chat.notifications",
+                label: { en: "Chat notifications", fr: "Notifications du clavardage" },
+                description: {
+                    en: "Chat notifications while the app is closed: Web Push decryption and sealed keys.",
+                    fr: "Notifications du clavardage app fermée : déchiffrement Web Push et clés scellées.",
+                },
+                status: "experimental",
+                howItWorks: {
+                    en: "A pushed message arrives encrypted as RFC 8291 requires. Native "
+                        + "Java decrypts it with the account's own P-256 key pair and "
+                        + "auth secret, and the secrets rest sealed by a key that never "
+                        + "leaves the Android Keystore.",
+                    fr: "Un message poussé arrive chiffré comme l'exige la RFC 8291. Du "
+                        + "Java natif le déchiffre avec la paire de clés P-256 et le "
+                        + "secret d'authentification propres au compte, et les secrets "
+                        + "reposent scellés par une clé qui ne quitte jamais le "
+                        + "Keystore d'Android.",
+                },
+                demo: { kind: "options" },
+                children: [
+                    {
+                        id: "chat.notifications.native",
+                        label: { en: "Native ntfy client", fr: "Client ntfy natif" },
+                        description: {
+                            en: "Java side of the closed-app chat push: Web Push decryption, sealed keys, and the ntfy client (live stream, poll from a cursor, read check, message and push parsing, de-duplication), the mirror of the phone and per-server preferences (climbing thresholds, browser mode, filter, inbox, quiet hours, Odoo's channel setting), and the engine: one connection per ntfy, reconnect backoff, the phone-side filter and inbox switch, silent posts in quiet hours, the browser-active hold (a chat push sent while a browser is active waits 10 s for its read, kept as ciphertext so a restart never loses it), Odoo-direct summary following Odoo's channel settings, status and health; then the Android side: per-server channels, conversation notifications, tap to open, the reply, mark read, mute and 👍 buttons with their retry job and handoff notification, the plugin and QR decoding; the automatic climbing of the level on battery saver and low battery with its job waiting for the charger, and the permanent service of levels 1 and 2 (left out by -PnoChatRealtime), its 15-minute job, the boot restart, and one permanent notification shared with the SMS gateway.",
+                            fr: "Côté Java de la poussée du clavardage app fermée : déchiffrement Web Push, clés scellées et client ntfy (flux continu, relève depuis un curseur, vérification de lecture, analyse des messages et des poussées, dédoublonnage), le miroir des préférences du téléphone et de chaque serveur (seuils de montée, mode navigateur, filtre, boîte de réception, heures calmes, réglage des canaux d'Odoo), et le moteur : une connexion par ntfy, reconnexion espacée, le filtre côté téléphone et l'interrupteur de la boîte de réception, notifications silencieuses pendant les heures calmes, l'attente du navigateur actif (une poussée de discussion envoyée pendant qu'un navigateur est actif attend 10 s sa lecture, gardée chiffrée pour qu'un redémarrage ne la perde jamais), sommaire direct d'Odoo qui suit les réglages des canaux d'Odoo, état et santé ; puis le côté Android : canaux par serveur, notifications de conversation, ouverture au toucher, les boutons répondre, marquer lu, muet et 👍 avec leur tâche de reprise et leur notification de relais, le plugin et le décodage de QR ; la montée automatique du niveau sur économiseur et batterie faible avec sa tâche qui attend le branchement, et le service permanent des niveaux 1 et 2 (retiré par -PnoChatRealtime), sa tâche aux 15 minutes, la relance au démarrage et une seule notification permanente partagée avec la passerelle SMS.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "One bearer-authenticated request reads the JSON events of several "
+                                + "topics. Each event is parsed, its body decoded from base64, and "
+                                + "failures are sorted into kinds (unauthorized, unreachable, cleartext "
+                                + "blocked...) so the caller can react. A set of the last message ids "
+                                + "drops the replays ntfy sends around a cursor.",
+                            fr: "Une requête authentifiée par jeton lit les événements JSON de "
+                                + "plusieurs sujets. Chaque événement est analysé, son corps décodé "
+                                + "du base64, et les échecs sont classés par genre (non autorisé, "
+                                + "injoignable, clair bloqué...) pour que l'appelant réagisse. Un "
+                                + "ensemble des derniers identifiants écarte les rejeux que ntfy "
+                                + "envoie autour d'un curseur.",
+                        },
+                        demo: { kind: "options" },
+                        files: [
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/B64.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/Hkdf.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushKeys.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushDecrypt.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/WebPushException.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/SecretBox.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/KeystoreKeys.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/HttpPolicy.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyServer.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyMessage.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyException.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NtfyClient.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/SeenIds.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushPayload.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/LockScreenMode.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChannelInfo.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/AccountView.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PhoneFilter.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/BrowserMode.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PhonePrefs.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushFilter.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/QuietHours.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushStrings.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NotificationModel.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ActionKind.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushLevelPolicy.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/BatteryClimber.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/KeyValue.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PrefsKeyValue.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/Subscription.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushStore.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushSettingsStore.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NativeSession.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PendingUnregister.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/NativeSessions.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/UnreadSummary.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/OdooDirectException.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/OdooDirect.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/OdooJson.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/OdooActions.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/Posted.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ReplyBody.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/UrlHref.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatAction.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ActionStore.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ActionRunner.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/HealthSnapshot.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/HeldStore.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PushEngine.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatNotifier.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushOpen.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionIntent.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionReceiver.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatActionJob.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushRuntime.java",
+                            "android/app/src/main/java/ca/erplibre/home/ChatPushPlugin.java",
+                            "android/app/src/main/java/ca/erplibre/home/BatteryExemption.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PermanentNotice.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/RealtimeHost.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/PolicyReread.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushJob.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatClimbJob.java",
+                            "android/app/src/main/java/ca/erplibre/home/chatpush/ChatPushBootReceiver.java",
+                            "android/app/src/realtime/java/ca/erplibre/home/chatpush/realtime/ChatPushService.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/ChatTestDoor.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/TestDoorChoice.java",
+                            "android/app/src/synctest/java/ca/erplibre/home/chatpush/TestPower.java",
+                        ],
+                    },
+                    {
+                        id: "chat.notifications.settings",
+                        label: { en: "Notification bridge", fr: "Pont des notifications" },
+                        description: {
+                            en: "TypeScript bridge to the native chat push (settings mirror, ntfy servers, subscriptions, session copies, health, tap to open, the drain of notification actions, QR decoding), the per-account ntfy (setup link, registration with Odoo, unregistering on removal), and the settings screen: levels with the level the battery climbed to and why, the direct battery exemption request read back on resume, battery climbing and its thresholds, the browser mode, link by QR or paste, and per account the lock screen, the chat filter, the inbox and record-mentions switches, quiet hours and what the browser mode does on that server; live status, the « not listening » banner in the chat list, opening from a tap.",
+                            fr: "Pont TypeScript vers la poussée native du clavardage (miroir des réglages, serveurs ntfy, abonnements, copies de session, santé, ouverture au toucher, relève des actions des notifications, décodage de QR), le ntfy par compte (lien de configuration, enregistrement auprès d'Odoo, désinscription au retrait) et l'écran de réglages : niveaux avec celui où la batterie a fait monter et pourquoi, demande directe de dispense de batterie relue au retour dans l'app, montée selon la batterie et ses seuils, mode navigateur, lien par QR ou collé, et par compte l'écran verrouillé, le filtre des conversations, les interrupteurs de la boîte de réception et des mentions dans un enregistrement, les heures calmes et ce que le mode navigateur fait sur ce serveur ; état en direct, bandeau « le téléphone n'écoute pas » dans la liste, ouverture au toucher.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "Each call goes to the native ChatPushPlugin; state changes run there "
+                                + "one at a time in call order, and a refusal comes back as an Error "
+                                + "naming the method. A notification tap carries a per-install secret "
+                                + "and one of three app paths, and is ignored otherwise. Each account "
+                            + "has its chat_push row: the link stores the token natively, the "
+                            + "subscription gives the endpoint mail.push.device registers once per "
+                            + "foreground session, and a removal unregisters it online or leaves it "
+                            + "to native code offline.",
+                            fr: "Chaque appel passe au ChatPushPlugin natif ; les changements d'état "
+                                + "y passent un à la fois dans l'ordre des appels, et un refus revient "
+                                + "en Error qui nomme la méthode. Le toucher d'une notification porte "
+                                + "un secret propre à l'installation et l'un de trois chemins de "
+                                + "l'app, sans quoi il est ignoré. Chaque compte a sa ligne chat_push : "
+                            + "le lien applique le jeton côté natif, l'abonnement donne le point de "
+                            + "terminaison que mail.push.device enregistre une fois par session au "
+                            + "premier plan, et un retrait le désinscrit en ligne ou le laisse au "
+                            + "natif hors ligne.",
+                        },
+                        demo: { kind: "none", reason: { en: "Native only, used by the chat notification settings.", fr: "Natif seulement, utilisé par les réglages des notifications du clavardage." } },
+                        files: [
+                            "src/plugins/chatPushPlugin.ts",
+                            "src/__mocks__/chatPushNative.ts",
+                            "src/services/chat/chatPush.ts",
+                            "src/services/chat/chatPushLink.ts",
+                            "src/services/migrations/addChatPush.ts",
+                            "src/services/migrations/addChatPushPrefs.ts",
+                            "src/services/chat/chatPushOpen.ts",
+                            "src/components/options/chat_notifications/options_chat_notifications_component.ts",
+                            "src/components/options/chat_notifications/options_chat_notifications_component.scss",
+                            "src/components/options/chat_notifications/options_chat_push_account_component.ts",
+                            "src/components/options/chat_notifications/options_chat_push_account_component.scss",
+                            "src/testing/pushNodeNative.ts",
+                            "src/testing/webPushNode.ts",
+                        ],
+                        tests: ["src/__tests__/webPushNode.test.ts", "src/__tests__/pushNodeNative.test.ts", "src/__tests__/chatPushPlugin.test.ts", "src/__tests__/chatPush.test.ts", "src/__tests__/chatPushLink.test.ts", "src/__tests__/chatPushOpen.test.ts", "src/__tests__/optionsChatNotifications.test.ts"],
+                    },
+                    {
+                        id: "chat.notifications.actions",
+                        label: { en: "Notification actions drain", fr: "Relève des actions des notifications" },
+                        description: {
+                            en: "The app takes over the reply, mark read, mute and 👍 that native code ended or hands over: done ones update the cache from Odoo's answer, handed-over ones go into the chat outbox with the native client uuid.",
+                            fr: "L'app reprend les réponses, lectures, mises en sourdine et 👍 que le natif a terminés ou lui confie : les terminés mettent le cache à jour d'après la réponse d'Odoo, les confiés passent dans la boîte d'envoi du clavardage avec l'uuid client natif.",
+                        },
+                        status: "experimental",
+                        howItWorks: {
+                            en: "At each foreground, once the accounts are loaded, and at each "
+                                + "actions event of the plugin, one drain at a time reads the done "
+                                + "and handed-over records, applies them and acks them. A reply "
+                                + "that may already be on Odoo without the module is searched by "
+                                + "its marker after the quiet window before any post; a reply whose "
+                                + "uuid a message or an op carries is skipped, so a repeated drain "
+                                + "sends nothing twice.",
+                            fr: "À chaque premier plan, une fois les comptes chargés, et à chaque "
+                                + "événement actions du plugin, une relève à la fois lit les "
+                                + "enregistrements terminés et confiés, les applique et les "
+                                + "acquitte. Une réponse peut-être déjà dans Odoo sans le module "
+                                + "est cherchée par son marqueur après la fenêtre de silence avant "
+                                + "tout envoi ; une réponse dont un message ou une opération porte "
+                                + "l'uuid est sautée, si bien qu'une relève répétée n'envoie rien "
+                                + "deux fois.",
+                        },
+                        demo: { kind: "none", reason: { en: "Native only: a notification's buttons.", fr: "Natif seulement : les boutons d'une notification." } },
+                        files: [
+                            "src/services/chat/chatPushActions.ts",
+                            "src/services/chat/chatLifecycle.ts",
+                        ],
+                        tests: ["src/__tests__/chatPushActions.test.ts", "src/__tests__/chatLifecycle.test.ts"],
+                    },
                 ],
             },
         ],

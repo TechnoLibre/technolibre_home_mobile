@@ -38,6 +38,9 @@ import javax.net.ssl.SSLPeerUnverifiedException;
 @CapacitorPlugin(name = "RawHttp")
 public class RawHttpPlugin extends Plugin {
 
+    /** Error code of a post whose connection failed: no byte of it reached the server. */
+    static final String UNSENT = "UNSENT";
+
     /**
      * Computes the SHA-256 fingerprint of a certificate's public key (SPKI).
      */
@@ -147,9 +150,21 @@ public class RawHttpPlugin extends Plugin {
                 }
             }
 
-            // Send body
             byte[] bodyBytes = (body != null ? body : "").getBytes("UTF-8");
             conn.setFixedLengthStreamingMode(bodyBytes.length);
+
+            // A failure to connect (refused, unknown host, unreachable, TLS
+            // handshake, connect timeout) comes before any byte of the
+            // request leaves: it is rejected with the code UNSENT, so the
+            // caller knows the server never saw the request.
+            try {
+                conn.connect();
+            } catch (Exception e) {
+                call.reject("RawHttp error: " + e.getMessage(), UNSENT, e);
+                return;
+            }
+
+            // Send body
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(bodyBytes);
             }

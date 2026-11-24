@@ -39,6 +39,7 @@ interface HomeState {
     loaded: boolean;
     uptime: string;
     telephoneParDefaut: boolean;
+    chatUnread: number;
 }
 
 export class HomeComponent extends EnhancedComponent {
@@ -103,12 +104,24 @@ export class HomeComponent extends EnhancedComponent {
           <span class="home-action-card__icon" aria-hidden="true">✏️</span>
           <span class="home-action-card__label" t-esc="t('label.new')"/>
         </button>
+        <button class="home-action-card" role="listitem" t-on-click="onCalendarClick"
+                t-att-aria-label="t('label.calendar')">
+          <span class="home-action-card__icon" aria-hidden="true">📅</span>
+          <span class="home-action-card__label" t-esc="t('label.calendar')"/>
+        </button>
         <button class="home-action-card" role="listitem" t-on-click="onServersClick"
                 t-att-aria-label="t('label.servers')">
           <span class="home-action-card__icon" aria-hidden="true">🖥️</span>
           <span class="home-action-card__label" t-esc="t('label.servers')"/>
           <span t-if="state.serverCount > 0" class="home-action-card__badge"
                 t-esc="state.serverCount" aria-hidden="true"/>
+        </button>
+        <button class="home-action-card" role="listitem" t-on-click="onChatClick"
+                t-att-aria-label="chatAriaLabel()">
+          <span class="home-action-card__icon" aria-hidden="true">💬</span>
+          <span class="home-action-card__label" t-esc="t('label.chat')"/>
+          <span t-if="state.chatUnread > 0" class="home-action-card__badge home-action-card__badge--unread"
+                t-esc="state.chatUnread" aria-hidden="true"/>
         </button>
         <button class="home-action-card" role="listitem" t-on-click="onApplicationsClick"
                 t-att-aria-label="t('label.odoo')">
@@ -188,19 +201,53 @@ export class HomeComponent extends EnhancedComponent {
             loaded: false,
             uptime: this._formatUptime(0),
             telephoneParDefaut: false,
+            chatUnread: 0,
         });
         onMounted(() => {
             this.loadStats();
             this._verifierRoleComposeur();
+            this.watchChat();
+            this.loadChatUnread();
             this._tickUptime();
             this._uptimeTimer = setInterval(() => this._tickUptime(), this._uptimePeriodMs);
         });
         onWillUnmount(() => {
+            this.unwatchChat();
             if (this._uptimeTimer !== null) {
                 clearInterval(this._uptimeTimer);
                 this._uptimeTimer = null;
             }
         });
+    }
+
+    private _onChatChanged = () => {
+        this.loadChatUnread();
+    };
+
+    /** Refreshes the chat badge each time the chat cache changes. */
+    watchChat(): void {
+        this.eventBus.addEventListener(Events.CHAT_CHANGED, this._onChatChanged);
+    }
+
+    unwatchChat(): void {
+        this.eventBus.removeEventListener(Events.CHAT_CHANGED, this._onChatChanged);
+    }
+
+    /** Reads the unread total from the cache; a failure leaves the badge as it was. */
+    async loadChatUnread(): Promise<void> {
+        try {
+            this.state.chatUnread = await this.chatService.unreadTotal();
+        } catch {
+            // The badge keeps its last value
+        }
+    }
+
+    chatAriaLabel(): string {
+        return this.state.chatUnread > 0 ? this.t("chat.tile_unread", {count: this.state.chatUnread}) : this.t("label.chat");
+    }
+
+    onChatClick() {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/chat"});
     }
 
     private _tickUptime(): void {
@@ -281,6 +328,10 @@ export class HomeComponent extends EnhancedComponent {
 
     onNoteClick(id: string) {
         this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: `/note/${id}`});
+    }
+
+    onCalendarClick() {
+        this.eventBus.trigger(Events.ROUTER_NAVIGATION, {url: "/activities"});
     }
 
     onServersClick() {

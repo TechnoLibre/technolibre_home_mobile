@@ -11,6 +11,12 @@ apply plugin: 'com.android.application'
 //                            another ~50% off the native libs.
 def skipWhisper = System.getenv("BUNDLE_SKIP_WHISPER") == "1"
 def allAbis = System.getenv("ALL_ABIS") == "1"
+def chatRealtime = !project.hasProperty('noChatRealtime')
+// `-PsyncTest` ajoute aussi src/synctest/ : la porte de test des
+// notifications du clavardage (ChatTestDoor), un récepteur que seul le shell
+// adb atteint. Les autres constructions n'en portent ni la classe ni l'entrée
+// de manifeste.
+def syncTestBuild = project.hasProperty('syncTest')
 
 android {
     namespace = "ca.erplibre.home"
@@ -26,6 +32,12 @@ android {
         versionName "2026.08.24.01"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "boolean", "SKIP_WHISPER", "${skipWhisper}"
+        // `-PnoChatRealtime` retire le service permanent des notifications du
+        // clavardage (src/realtime/ : la classe et son entrée de manifeste),
+        // pour une distribution qui refuse un service specialUse. Les niveaux
+        // 1 et 2 deviennent alors le niveau 3 ; le reste de l'app ne joint le
+        // service que par son nom de classe.
+        buildConfigField "boolean", "CHAT_REALTIME", "${chatRealtime}"
 
         // `-PlanCleartext` produit un APK de DEMONSTRATION qui tolere le HTTP
         // en clair, pour joindre un Odoo du reseau local en Wi-Fi.
@@ -40,10 +52,19 @@ android {
         if (lanCleartext) {
             logger.warn("lanCleartext : APK de demonstration, HTTP en clair tolere par le systeme")
         }
+        // `-PsyncTest` produit l'app des tests de synchro d'ERPLibre
+        // (long_test/mobile_sync_device.py) : un autre paquet, donc d'autres
+        // donnees, a cote de l'app de l'utilisateur, qu'il ne touche pas.
+        def syncTest = project.hasProperty('syncTest')
+        if (syncTest) {
+            applicationIdSuffix ".synctest"
+        }
         manifestPlaceholders = [
             netSecConfig    : lanCleartext ? "network_security_config_lan"
                                            : "network_security_config",
             cleartextAllowed: lanCleartext ? "true" : "false",
+            appLabel        : syncTest ? "ERPLibre (test)" : "@string/app_name",
+            mainLabel       : syncTest ? "ERPLibre (test)" : "@string/title_activity_main",
         ]
         if (!skipWhisper) {
             externalNativeBuild {
@@ -102,6 +123,30 @@ android {
                     (slim ? ':repos:repo' : '')
         }
     }
+    if (chatRealtime) {
+        sourceSets {
+            debug {
+                java.srcDirs += 'src/realtime/java'
+                manifest.srcFile 'src/realtime/AndroidManifest.xml'
+            }
+            release {
+                java.srcDirs += 'src/realtime/java'
+                manifest.srcFile 'src/realtime/AndroidManifest.xml'
+            }
+        }
+    } else {
+        logger.lifecycle("noChatRealtime : service permanent du clavardage exclu de l'APK")
+    }
+    // Les tests JVM de la porte de test tournent dans toutes les
+    // constructions : sans -PsyncTest, ses sources ne sont compilées que pour
+    // eux, jamais dans l'APK.
+    if (!syncTestBuild) {
+        sourceSets {
+            test {
+                java.srcDirs += 'src/synctest/java'
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled true
@@ -119,6 +164,19 @@ android {
     }
 }
 
+// Le manifeste d'un jeu de sources est unique (debug et release portent déjà
+// celui de src/realtime/) : la porte de test s'ajoute à chaque variante par
+// l'API des variantes, qui empile un manifeste de plus.
+if (syncTestBuild) {
+    androidComponents {
+        onVariants(selector().all()) { variant ->
+            variant.sources.java.addStaticSourceDirectory('src/synctest/java')
+            variant.sources.manifests.addStaticManifestFile('src/synctest/AndroidManifest.xml')
+        }
+    }
+    logger.lifecycle("syncTest : porte de test des notifications du clavardage incluse")
+}
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
@@ -132,15 +190,21 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"
+    // android.jar's org.json only has stubs on the JVM; the real one runs PushPayload and NtfyMessage tests
+    testImplementation "org.json:json:20231013"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation "com.google.android.gms:play-services-cast-framework:21.2.0"
     implementation "com.github.mwiede:jsch:0.2.25"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "com.google.mlkit:text-recognition:16.0.1"
     // MarianMT on-device translation: ONNX Runtime for encoder/decoder inference
     implementation "com.microsoft.onnxruntime:onnxruntime-android:1.20.0"
     implementation "com.google.mlkit:face-detection:16.1.7"
+    // QR codes of the chat notification setup, decoded from a picked image
+    implementation "com.google.mlkit:barcode-scanning:17.3.0"
 }
 
 apply from: 'capacitor.build.gradle'

@@ -413,6 +413,7 @@ export class TagManagerComponent extends EnhancedComponent {
             };
             await this.tagService.addTag(newTag);
             this.state.allTags = await this.tagService.getAllTags();
+            this.eventBus.trigger(Events.TAGS_UPDATED, {});
             // Automatically apply it to the current note
             this.state.noteTags = [...this.state.noteTags, newTag.id];
             await this.saveTagsToNote();

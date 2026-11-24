@@ -2,6 +2,7 @@ import { defineConfig, Plugin } from "vite";
 import {
     copyFileSync,
     existsSync,
+    lstatSync,
     mkdirSync,
     readdirSync,
     readFileSync,
@@ -199,7 +200,17 @@ interface CopyStats {
     skippedName: number;   // SKIP / MANIFEST_SKIP_DIRS / extraSkip
     skippedExclude: number; // outputExclusion hit
     skippedSize: number;   // over maxFileSize
-    errors: number;        // stat/copy errors (broken symlinks, perms…)
+    skippedLink: number;   // symlink whose target is missing
+    errors: number;        // stat/copy errors (permissions…)
+}
+
+/** Whether path is itself a symbolic link (false when even lstat fails). */
+function isLink(path: string): boolean {
+    try {
+        return lstatSync(path).isSymbolicLink();
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -209,7 +220,7 @@ interface CopyStats {
  * maxFileSize: if set, files larger than this (bytes) are skipped.
  * stats: accumulated counters (pass a fresh object at the top-level call).
  */
-function copyDirToBundle(
+export function copyDirToBundle(
     srcDir: string,
     relBase: string,
     destDir: string,
@@ -259,7 +270,13 @@ function copyDirToBundle(
         try {
             stat = statSync(fullSrc);
         } catch (e) {
-            // Broken symlink, permission error, etc.
+            // A link whose target is missing (third-party addon repos ship some) is skipped;
+            // any other stat failure is an error
+            if (isLink(fullSrc)) {
+                dbg(`skip(broken link) ${relPath}`);
+                if (stats) stats.skippedLink++;
+                continue;
+            }
             console.warn(`[bundle-warn] stat failed: ${fullSrc} — ${e}`);
             if (stats) stats.errors++;
             continue;
@@ -291,9 +308,92 @@ function copyDirToBundle(
     }
 }
 
+/**
+ * Directory names the workspace bundle (section 1b) never enters, at any
+ * depth: heavy or redundant subtrees, and private/, which may be versioned
+ * on a private fork but is never shipped.
+ */
+const SKIP_WS_DIRS = new Set([
+    "addons",      // bundled per-repo as tar.gz
+    "mobile",      // this app — already in /repo/
+    "node_modules",
+    "dist", "build", "coverage",
+    "private",     // sensitive, versioned or not
+    ".repo", ".git",
+    "cache",
+]);
+
+/**
+ * The paths git tracks under root (its index), with every directory that
+ * holds one, relative to root with "/" separators; null when git cannot
+ * answer (no repository, no git).
+ */
+export function gitTrackedPaths(root: string): Set<string> | null {
+    let listed: string;
+    try {
+        listed = execFileSync("git", ["-C", root, "ls-files", "-z", "--cached"], {
+            encoding: "utf8",
+            maxBuffer: 256 * 1024 * 1024,
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+    } catch {
+        return null;
+    }
+    const tracked = new Set<string>();
+    for (const file of listed.split("\0")) {
+        if (!file) continue;
+        tracked.add(file);
+        for (let i = file.indexOf("/"); i >= 0; i = file.indexOf("/", i + 1)) {
+            tracked.add(file.slice(0, i));
+        }
+    }
+    return tracked;
+}
+
+/**
+ * The skip function of the workspace walk: SKIP_WS_DIRS, the venvs and the
+ * Odoo trees always; then every path git does not track (tracked, from
+ * gitTrackedPaths) — ignored or not yet added — so the APK carries
+ * versioned files only.
+ */
+export function workspaceSkip(tracked: Set<string>): (relBase: string, name: string) => boolean {
+    return (relBase: string, name: string): boolean => {
+        if (SKIP_WS_DIRS.has(name)) return true;
+        if (name.startsWith(".venv")) return true;
+        if (/^odoo\d+\.\d+/.test(name)) return true;
+        return !tracked.has(relBase ? `${relBase}/${name}` : name);
+    };
+}
+
+/**
+ * Section 1b: the files git tracks under workspaceRoot (workspaceSkip),
+ * minus excludeAbsPaths, copied into outDir with their index.json; the
+ * counters, or null when git cannot list what it tracks. It fails closed
+ * then: outDir is removed, nothing is copied, and a warning says so — a
+ * name list would let any ignored file (a local config, notes) through.
+ */
+export function bundleWorkspace(workspaceRoot: string, outDir: string, excludeAbsPaths: Set<string>): CopyStats | null {
+    removeDirRobust(outDir);
+    const tracked = gitTrackedPaths(workspaceRoot);
+    if (!tracked) {
+        console.warn(
+            `[bundle-warn] git cannot list the files of ${workspaceRoot}:` +
+            " src/public/erplibre/ is left out of this build",
+        );
+        return null;
+    }
+    mkdirSync(outDir, { recursive: true });
+    const index: BundleEntry[] = [];
+    const stats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0 };
+    copyDirToBundle(workspaceRoot, "", outDir, index, workspaceSkip(tracked), excludeAbsPaths,
+        MAX_BUNDLE_FILE_BYTES, stats);
+    writeFileSync(join(outDir, "index.json"), JSON.stringify(index, null, 2));
+    return stats;
+}
+
 // ── XML manifest parser ───────────────────────────────────────────────────────
 
-function parseManifestXml(xml: string): {
+export function parseManifestXml(xml: string): {
     remotes: Record<string, string>;
     projects: Array<{ name: string; path: string; remote: string; revision: string }>;
 } {
@@ -317,6 +417,29 @@ function parseManifestXml(xml: string): {
     }
 
     return { remotes, projects };
+}
+
+/**
+ * Absolute paths of the manifest projects present on disk, which the
+ * manifest-repo loop (section 2) bundles one tar.gz each. The workspace walk
+ * (section 1b) leaves them out, so no file ships twice: a project outside
+ * addons/ and mobile/, such as script/stream_deck/games, would otherwise land
+ * in both. Empty when section 2 bundles nothing (no manifest, or skipRepos):
+ * those files then stay in the workspace bundle.
+ */
+export function manifestProjectPathsOnDisk(
+    manifestPath: string,
+    skipRepos: boolean,
+): Set<string> {
+    if (skipRepos || !existsSync(manifestPath)) return new Set();
+    const { projects } = parseManifestXml(readFileSync(manifestPath, "utf-8"));
+    // Same root as section 2: {workspace}/.repo/local_manifests/<file>.
+    const workspaceRoot = resolve(dirname(manifestPath), "../..");
+    return new Set(
+        projects
+            .map((proj) => resolve(workspaceRoot, proj.path))
+            .filter((path) => existsSync(path)),
+    );
 }
 
 // ── Bundle-source plugin ──────────────────────────────────────────────────────
@@ -364,7 +487,7 @@ function bundleSourcePlugin(): Plugin {
             mkdirSync(appOutDir, { recursive: true });
 
             const appIndex: BundleEntry[] = [];
-            const appStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0 };
+            const appStats: CopyStats = { copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0 };
             const appT0 = Date.now();
 
             // Skip src/public/ to avoid bundling the bundle itself
@@ -407,63 +530,49 @@ function bundleSourcePlugin(): Plugin {
                 `)`
             );
 
+            // The ERPLibre manifest that section 2 bundles, and its escape
+            // hatch. Read here because section 1b leaves out what section 2
+            // takes.
+            const manifestPath = resolve(
+                process.env["ERPLIBRE_MANIFEST_PATH"] ??
+                    join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
+            );
+            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+
             // ── 1b. Workspace root bundle (src/public/erplibre/) ──────────
-            // The full ERPLibre workspace as seen from /home/.../erplibre01/,
-            // minus the obvious heavy / redundant subtrees:
+            // The files git tracks in the ERPLibre workspace (workspaceSkip:
+            // nothing ignored or unversioned, such as tasks/ or a local
+            // config; nothing at all when git cannot list them, see
+            // bundleWorkspace), minus the obvious heavy / redundant subtrees:
             //   addons/      already in src/public/repos/{slug}.tar.gz
             //   mobile/      this app, already in src/public/repo/
             //   .venv*/      Python venvs
             //   odoo*/       upstream Odoo source trees
             //   node_modules / dist / build / .repo / .git / private
+            //   manifest projects on disk, already in src/public/repos/
+            //     (script/stream_deck/games, the Stream Deck games)
             //
             // Result: scripts, Makefile, conf/, manifest/, requirement/,
             // doc/, top-level docs, etc. — the things you'd actually want
             // to read from the Code tool. Skipped on BUNDLE_SKIP_ERPLIBRE=1.
             if (process.env["BUNDLE_SKIP_ERPLIBRE"] !== "1") {
                 const workspaceRoot = resolve(root, "..", "..");
-                const erplibreOutDir = join(root, "src", "public", "erplibre");
-                removeDirRobust(erplibreOutDir);
-                mkdirSync(erplibreOutDir, { recursive: true });
-
-                const erplibreIndex: BundleEntry[] = [];
-                const erplibreStats: CopyStats = {
-                    copied: 0, skippedName: 0, skippedExclude: 0,
-                    skippedSize: 0, errors: 0,
-                };
                 const erplibreT0 = Date.now();
-
-                const SKIP_WS_DIRS = new Set([
-                    "addons",      // bundled per-repo as tar.gz
-                    "mobile",      // this app — already in /repo/
-                    "node_modules",
-                    "dist", "build", "coverage",
-                    "private",     // not versioned, sensitive
-                    ".repo", ".git",
-                    "cache",
-                ]);
-                const skipWsFn = (_relBase: string, name: string): boolean => {
-                    if (SKIP_WS_DIRS.has(name)) return true;
-                    if (name.startsWith(".venv")) return true;
-                    if (/^odoo\d+\.\d+/.test(name)) return true;
-                    return false;
-                };
-
-                copyDirToBundle(
-                    workspaceRoot, "", erplibreOutDir, erplibreIndex, skipWsFn,
-                    undefined, MAX_BUNDLE_FILE_BYTES, erplibreStats,
+                const inRepos = manifestProjectPathsOnDisk(manifestPath, skipRepos);
+                const erplibreStats = bundleWorkspace(
+                    workspaceRoot, join(root, "src", "public", "erplibre"), inRepos,
                 );
-
-                writeFileSync(
-                    join(erplibreOutDir, "index.json"),
-                    JSON.stringify(erplibreIndex, null, 2),
-                );
-
-                console.log(
-                    `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
-                    `  (${Date.now() - erplibreT0} ms` +
-                    (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
-                    `)`
-                );
+                if (erplibreStats) {
+                    console.log(
+                        `[bundle-source] ${erplibreStats.copied} files → src/public/erplibre/` +
+                        `  (${Date.now() - erplibreT0} ms` +
+                        (erplibreStats.skippedExclude
+                            ? `, ${erplibreStats.skippedExclude} manifest projects left to repos/`
+                            : "") +
+                        (erplibreStats.errors ? `  ⚠ ${erplibreStats.errors} errors` : "") +
+                        `)`
+                    );
+                }
             } else {
                 // Honor the skip flag: nuke any leftover from a prior build.
                 removeDirRobust(join(root, "src", "public", "erplibre"));
@@ -483,7 +592,7 @@ function bundleSourcePlugin(): Plugin {
                 const testIndex: BundleEntry[] = [];
                 const testStats: CopyStats = {
                     copied: 0, skippedName: 0, skippedExclude: 0,
-                    skippedSize: 0, errors: 0,
+                    skippedSize: 0, skippedLink: 0, errors: 0,
                 };
                 const testT0 = Date.now();
                 copyDirToBundle(
@@ -503,10 +612,6 @@ function bundleSourcePlugin(): Plugin {
             }
 
             // ── 2. ERPLibre manifest repos (src/public/repos/) ────────────
-            const manifestPath = resolve(
-                process.env["ERPLIBRE_MANIFEST_PATH"] ??
-                    join(root, "../../.repo/local_manifests/erplibre_manifest.xml"),
-            );
             const reposOutDir = join(root, "src", "public", "repos");
             removeDirRobust(reposOutDir);
             mkdirSync(reposOutDir, { recursive: true });
@@ -525,8 +630,8 @@ function bundleSourcePlugin(): Plugin {
             // ~15 s of build + ~15 s of adb install (≈378 MB of assets gone).
             // The Code tool's "browse a manifest repo" flow surfaces a clear
             // error in this mode (BundleNotShippedError); use the full build
-            // when you actually need to browse those repos.
-            const skipRepos = process.env["BUNDLE_SKIP_REPOS"] === "1";
+            // when you actually need to browse those repos. skipRepos is read
+            // above, with manifestPath.
 
             if (skipRepos) {
                 console.log(
@@ -588,7 +693,7 @@ function bundleSourcePlugin(): Plugin {
 
                     const projIndex: BundleEntry[] = [];
                     const projStats: CopyStats = {
-                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, errors: 0,
+                        copied: 0, skippedName: 0, skippedExclude: 0, skippedSize: 0, skippedLink: 0, errors: 0,
                     };
                     const projT0 = Date.now();
                     copyDirToBundle(

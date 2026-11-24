@@ -7,6 +7,13 @@ export interface CertificatePinInfo {
   expires: string;
 }
 
+/**
+ * Code of a post() rejection whose connection failed (refused, unknown
+ * host, unreachable, TLS handshake, connect timeout): no byte of the
+ * request reached the server.
+ */
+export const RAW_HTTP_UNSENT = "UNSENT";
+
 export interface RawHttpPlugin {
   post(options: {
     url: string;

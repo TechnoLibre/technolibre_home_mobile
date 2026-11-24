@@ -1,0 +1,64 @@
+[
+  { "name": "plain text", "text": "Bonjour tout le monde" },
+  { "name": "one newline", "text": "ligne un\nligne deux" },
+  { "name": "three newlines", "text": "ligne un\n\n\nligne deux" },
+  { "name": "carriage return and newline", "text": "ligne un\r\nligne deux" },
+  { "name": "leading and trailing blanks", "text": "  \n  bonjour   le monde \n  " },
+  { "name": "markup characters", "text": "<b>gras</b> & \"citation\" 'apostrophe' `accent`" },
+  { "name": "url", "text": "voir https://example.com maintenant" },
+  { "name": "url with a trailing dot", "text": "voir https://example.com." },
+  { "name": "www without a scheme", "text": "www.example.org/path?q=1" },
+  { "name": "url with a query and an ampersand", "text": "https://example.com/a?b=1&c=2" },
+  { "name": "url in capitals", "text": "HTTPS://Example.COM/Chemin" },
+  { "name": "url without a tld", "text": "https://x" },
+  { "name": "emoticon alone", "text": ":)" },
+  { "name": "emoticon before a line break", "text": ":)\nsuite" },
+  { "name": "shortcode", "text": "salut :grinning: !" },
+  { "name": "emoticons with escaped characters", "text": "j'aime <3 mais :'(" },
+  {
+    "name": "partner mentioned twice",
+    "text": "@Alice Martin et encore @Alice Martin",
+    "mentions": { "partners": [{ "id": 7, "name": "Alice Martin" }], "channels": [] }
+  },
+  {
+    "name": "shorter and longer partner names",
+    "text": "@Alice puis @Alice Martin",
+    "mentions": {
+      "partners": [
+        { "id": 8, "name": "Alice" },
+        { "id": 7, "name": "Alice Martin" }
+      ],
+      "channels": []
+    }
+  },
+  {
+    "name": "pick edited away",
+    "text": "@Alice Mart bonjour",
+    "mentions": { "partners": [{ "id": 7, "name": "Alice Martin" }], "channels": [] }
+  },
+  {
+    "name": "channel",
+    "text": "voir #général-test",
+    "mentions": { "partners": [], "channels": [{ "id": 3, "name": "général-test", "parentName": null }] }
+  },
+  {
+    "name": "sub-channel",
+    "text": "suite dans #général-test > sous-fil",
+    "mentions": { "partners": [], "channels": [{ "id": 4, "name": "sous-fil", "parentName": "général-test" }] }
+  },
+  { "name": "everyone", "text": "@everyone réunion à 10 h" },
+  {
+    "name": "mention at the start",
+    "text": "@Alice Martin bonjour",
+    "mentions": { "partners": [{ "id": 7, "name": "Alice Martin" }], "channels": [] }
+  },
+  { "name": "emoji typed directly", "text": "Bravo 🎉 à tous" },
+  {
+    "name": "review focus mix",
+    "text": "@Alice Martin, voir #général-test :)\nhttps://example.com. <b>&\"'\n\n\n@Alice Martin",
+    "mentions": {
+      "partners": [{ "id": 7, "name": "Alice Martin" }],
+      "channels": [{ "id": 3, "name": "général-test", "parentName": null }]
+    }
+  }
+]

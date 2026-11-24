@@ -1,6 +1,8 @@
 import { Application, ApplicationID } from "../models/application";
 import { AppAlreadyExistsError, NoAppMatchError } from "../js/errors";
 import { DatabaseService } from "./databaseService";
+import { sameServerUrl, syncConfigIdFor } from "../models/syncConfig";
+
 
 export interface GetAppListResult {
   appList: Array<Application>;
@@ -10,8 +12,58 @@ export interface GetMatchesResult extends GetAppListResult {
   matches: Array<Application>;
 }
 
+/**
+ * What changed in the application list: the kind; the sync config id the
+ * application has after the change (the one it had, for a delete; null
+ * without a database); for an edit that renamed it, the id before;
+ * and whether the change touches the connection a chat bus runs on (the
+ * address, user, password, database or Odoo version, or an application
+ * added or deleted), which autoSync, the poll interval and the ntfy fields
+ * do not.
+ */
+export interface ApplicationsChange {
+  kind: "add" | "edit" | "delete";
+  configId: string | null;
+  previousConfigId?: string;
+  realtimeRelevant: boolean;
+}
+
+const configIdOf = (app: Application): string | null =>
+  app.database ? syncConfigIdFor(app.url, app.username, app.database) : null;
+
+/** A hook around renameSyncConfigId, given both config ids. */
+type RenameHook = (oldConfigId: string, newConfigId: string) => Promise<void> | void;
+
 export class AppService {
   private _db: DatabaseService;
+  /**
+   * Awaited after each add, edit and delete that reached the database. A
+   * listener that fails is logged and does not fail the change.
+   */
+  onChanged: ((change: ApplicationsChange) => Promise<void> | void) | null = null;
+  /**
+   * Awaited before an edit moves the sync rows from one config id to
+   * another (renameSyncConfigId), with both ids: a writer of these rows
+   * (a chat upload) stops and is held until afterRename, so none writes
+   * while they move. A hook that fails is logged and does not stop the
+   * rename.
+   */
+  beforeRename: RenameHook | null = null;
+  /**
+   * Awaited once the rows moved, or the move failed, after beforeRename
+   * ran: the held writers go on under the new id. A hook that fails is
+   * logged and does not fail the edit.
+   */
+  afterRename: RenameHook | null = null;
+  /**
+   * Awaited before an application's sync config id goes, with that id:
+   * its row deleted (delete and clear), or an edit that leaves the id
+   * with no application (another login, database or server; a url merely
+   * spelled differently renames instead). The chat push unregisters the
+   * phone from that server while it still has the credentials. A hook
+   * that fails is logged and the change goes on.
+   */
+  beforeDelete: ((configId: string) => Promise<void>) | null = null;
 
   constructor(db: DatabaseService) {
     this._db = db;
@@ -44,7 +96,32 @@ export class AppService {
     }
 
     await this._db.addApplication(app);
+    const configId = configIdOf(app);
+    await this.notify({ kind: "add", configId, realtimeRelevant: configId !== null });
     return true;
+  }
+
+  private async notifyDelete(app: Application): Promise<void> {
+    const configId = configIdOf(app);
+    await this.notify({ kind: "delete", configId, realtimeRelevant: configId !== null });
+  }
+
+  private async runBeforeDelete(app: Application): Promise<void> {
+    const configId = configIdOf(app);
+    if (configId === null) return;
+    try {
+      await this.beforeDelete?.(configId);
+    } catch (e) {
+      console.warn("[appService] delete hook failed:", e);
+    }
+  }
+
+  private async notify(change: ApplicationsChange): Promise<void> {
+    try {
+      await this.onChanged?.(change);
+    } catch (e) {
+      console.warn("[appService] change listener failed:", e);
+    }
   }
 
   /**
@@ -57,7 +134,9 @@ export class AppService {
   public async clear(): Promise<boolean> {
     const apps = await this.getApps();
     for (const app of apps) {
+      await this.runBeforeDelete(app);
       await this._db.deleteApplication(app.url, app.username);
+      await this.notifyDelete(app);
     }
     return true;
   }
@@ -81,7 +160,11 @@ export class AppService {
       throw new NoAppMatchError();
     }
 
+    await this.runBeforeDelete(matchingApp);
     await this._db.deleteApplication(matchingApp.url, matchingApp.username);
+    // Its per-server entries no longer count in the notes' global status
+    await this._db.refreshAllNoteSyncStatuses();
+    await this.notifyDelete(matchingApp);
     return true;
   }
 
@@ -114,13 +197,55 @@ export class AppService {
     if (options?.ignorePassword) {
       newApp = Object.assign({}, newApp, { password: appToEdit.password });
     }
+    const renames = appID.username === newApp.username && sameServerUrl(appID.url, newApp.url)
+      && appToEdit.database === newApp.database;
+    if (!renames && configIdOf(appToEdit) !== configIdOf(newApp)) await this.runBeforeDelete(appToEdit);
 
     await this._db.updateApplication(
       appID.url,
       appID.username,
       Object.assign({}, newApp)
     );
+    // Sync records are keyed "url|username|database". They follow the
+    // application only when it still names the same server, user and
+    // database (url spelled differently): a remote id means nothing
+    // elsewhere, so other edits leave them behind, non-live, and the next
+    // push creates new records.
+    if (renames) {
+      const oldConfigId = syncConfigIdFor(appID.url, appID.username, appToEdit.database);
+      const newConfigId = syncConfigIdFor(newApp.url, newApp.username, newApp.database);
+      if (oldConfigId !== newConfigId) await this.renameConfigId(oldConfigId, newConfigId);
+    }
+    await this._db.refreshAllNoteSyncStatuses();
+    const before = configIdOf(appToEdit);
+    const after = configIdOf(newApp);
+    const connectionChanged = !sameServerUrl(appToEdit.url, newApp.url) || appToEdit.username !== newApp.username
+      || appToEdit.password !== newApp.password || appToEdit.database !== newApp.database
+      || appToEdit.odooVersion !== newApp.odooVersion;
+    await this.notify({
+      kind: "edit",
+      configId: after,
+      ...(before !== null && before !== after ? { previousConfigId: before } : {}),
+      realtimeRelevant: (before !== null || after !== null) && connectionChanged,
+    });
     return true;
+  }
+
+  /** Moves the sync rows to the new config id, between beforeRename and afterRename. */
+  private async renameConfigId(oldConfigId: string, newConfigId: string): Promise<void> {
+    const hook = async (fn: RenameHook | null) => {
+      try {
+        await fn?.(oldConfigId, newConfigId);
+      } catch (e) {
+        console.warn("[appService] rename hook failed:", e);
+      }
+    };
+    await hook(this.beforeRename);
+    try {
+      await this._db.renameSyncConfigId(oldConfigId, newConfigId);
+    } finally {
+      await hook(this.afterRename);
+    }
   }
 
   /**

@@ -1,0 +1,1 @@
+{"title": "MS Chat", "options": {"icon": "/web/image/res.partner/9/avatar_128", "data": {"model": "discuss.channel", "res_id": 4, "action": "mail.action_discuss", "erplibre": {"v": 1, "message_id": 17, "channel_type": "chat"}}, "body": "Bonjour du test de notification"}}

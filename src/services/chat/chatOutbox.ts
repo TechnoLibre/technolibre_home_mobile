@@ -1,0 +1,4101 @@
+import {
+  messageKeyOf,
+  sameTarget,
+  type ChannelType, type ChatAttachment, type ChatMailboxItem, type ChatMessage, type ChatNotice, type ChatReaction, type MessageTarget,
+  type OdooNotify, type OutgoingFile, type RecordThread,
+} from "../../models/chat";
+import { attachmentSettings, deviceAttachmentIO } from "../attachmentService";
+import type { DatabaseService, OutboxOp } from "../databaseService";
+import { networkService } from "../networkService";
+import { OdooRpcError, RequestNotSentError, type OdooRpcClient, type SyncCredentials } from "../odoo/odooRpcClient";
+import {
+  OutboxBlockedError,
+  OutboxHeldError,
+  OutboxRetryLaterError,
+  dependencyOrder,
+  type DrainResult,
+  type OutboxService,
+} from "../outboxService";
+import {
+  deviceChatFiles, originalPath as originalFilePath, removeChatFile, type ChatFiles, type TransferProgress,
+} from "./chatFiles";
+import { joinDraftText } from "./chatDraft";
+import {
+  ChatFileTooBigError,
+  ChatTransferCancelledError,
+  ChatTransferRefusedError,
+  MODULE_UPLOAD_ROUTE,
+  ODOO_UPLOAD_ROUTE,
+  UPLOAD_SLACK_BYTES,
+  type ChatTransfer,
+} from "./chatTransfer";
+import { syncConfigIdFor } from "../../models/syncConfig";
+import { CREATE_QUIET_WINDOW_MS, clientMarker } from "../outboxMarker";
+import { bodyHasMarker, bodyText, chatMarker, isEmptyMessage, withEditedMark } from "./chatBody";
+import { EMPTY_MENTIONS, composeBody, type Mentions } from "./chatCompose";
+import { emojiConversions } from "./chatEmoji";
+import { effectiveLevel, levelAtLeast } from "./chatModule";
+import type { ChatRepository, DraftThread } from "./chatRepository";
+import { parseStore, type StoreDelta } from "./chatStore";
+import { v4 as uuidv4 } from "uuid";
+
+/** Pseudo note id of every chat row in sync_outbox: the note sync leaves them alone. */
+export const CHAT_NOTE = "chat";
+/**
+ * params { channelId, text, mentions: Mentions, parent: MessageTarget|null,
+ * useModule: boolean, createSentAt?, maybeSent?, plainText?, files?,
+ * idempotentUpload?, reuploaded? }. maybeSent: a send of the post may have
+ * reached Odoo before the op existed (a notification's reply handed over
+ * by native code), so its first attempt already looks for the marker.
+ * plainText: the body converts no emoticon, as native code's. mentions:
+ * the people and channels picked, the body and the post's partner_ids and
+ * special_mentions built from them and the text at each send
+ * (composeBody); parent: the message it replies to, its
+ * server id read at the send. files: the local uuids of its files in pick
+ * order (their rows carry the post's client uuid); idempotentUpload:
+ * whether their uploads take the module route (module 1.2); reuploaded:
+ * the files the server lost were uploaded again once.
+ */
+export const CHAT_POST = "chat.post";
+/**
+ * params { thread: RecordThread, parentId, text, mentions: Mentions, note,
+ * useModule, files?, drafts?, draftText?, createSentAt?, reuploaded? }: a
+ * reply in a record's chatter, from the inbox item of message parentId
+ * (sent as its parent_id), posted on the record by /mail/message/post as
+ * an internal note (note: mail.mt_note, no follower added) or a message
+ * to the followers (mail.mt_comment). One op per reply, never merged; a reply waits for the
+ * reply on the same record queued before it. Its files are uploaded on the
+ * record as a post's are (CHAT_UPLOAD ops before it, naming the record in
+ * place of a channel) and linked the same way (postFiles). useModule:
+ * module 1.4, whose upload route takes records and whose post dedups by
+ * the op's client uuid on any model. No chat_messages row stands for it:
+ * the replies waiting are read from the ops (pendingRecordReplies).
+ */
+export const CHAT_RECORD_POST = "chat.record_post";
+/**
+ * params { channelId | thread, localUuid, path, name, mimetype, size,
+ * voice, useModule, uploadSentAt?, uploadEndedAt?, heldFor? }: one file of
+ * a post, uploaded as a pending attachment just before it, on its channel
+ * (channelId) or on the record a reply goes to (thread, a RecordThread).
+ * The op's client uuid is the client_uuid of the module route (useModule).
+ * uploadSentAt: the first send that may have reached the server;
+ * uploadEndedAt: the end of the last such send that failed.
+ */
+export const CHAT_UPLOAD = "chat.upload";
+/**
+ * params { channelId, localUuid, name, reason, limit?, label? }: a notice,
+ * never sent. A file of a post was not sent ("too_big": over `limit`, the
+ * session's size limit, or answered 413 without one; "missing": no longer
+ * on the phone; "refused", "not_found": the server's answer); the post
+ * went without it. label: the record's name for a file of a reply on a
+ * record (no channelId).
+ */
+export const CHAT_FILE_REFUSED = "chat.file_refused";
+/** Uploads one account runs at a time, beside its other ops. */
+export const CHAT_UPLOADS_AT_ONCE = 2;
+/**
+ * params { channelId, lastMessageId, mentions: boolean }: mark_as_read up
+ * to lastMessageId, then with mentions the user's notifications of the
+ * conversation up to the same message (mark_all_as_read).
+ */
+export const CHAT_READ = "chat.read";
+/**
+ * params { channelId, mode: "dm"|"group"|"channel", partnerIds, name,
+ * groupId: number|false, useModule, createSentAt? }. channelId is the
+ * temporary (negative) id until the create settles; a direct message
+ * pinned again carries its own id.
+ */
+export const CHAT_CREATE = "chat.create";
+/** params { channelId } */
+export const CHAT_JOIN = "chat.join";
+/** params { channelId, partnerIds }; a group or a channel (a chat takes a new group instead). */
+export const CHAT_INVITE = "chat.invite";
+/** params { channelId, name }: a group or channel's name, a chat's own label. */
+export const CHAT_RENAME = "chat.rename";
+/** params { channelId, description } */
+export const CHAT_DESCRIBE = "chat.describe";
+/** params { channelId } */
+export const CHAT_LEAVE = "chat.leave";
+/** params { channelId }: a direct message unpinned on the server. */
+export const CHAT_HIDE = "chat.hide";
+/** params { channelId, until }; until: an ISO date, "forever", or null (not muted). */
+export const CHAT_MUTE = "chat.mute";
+/** params { until }, as CHAT_MUTE, for the whole account. */
+export const CHAT_GLOBAL_MUTE = "chat.global_mute";
+/** params { channelId, value: OdooNotify|null }: Odoo's notification setting of a channel; null: the general one applies. */
+export const CHAT_NOTIFY = "chat.notify";
+/** params { value: OdooNotify }: Odoo's general setting for the account's channels. */
+export const CHAT_GLOBAL_NOTIFY = "chat.global_notify";
+/** params { channelId, partnerId }: another member removed, by a system user (server module 1.1). */
+export const CHAT_REMOVE = "chat.remove";
+
+/**
+ * params { channelId, count, label }: a notice, never sent. The server took
+ * the conversation away (left elsewhere, deleted) while `count` actions of
+ * the user still waited for it; `label` names it as it was cached.
+ */
+export const CHAT_DROPPED = "chat.dropped";
+
+/**
+ * params { channelId, messageId: number|null, clientUuid: string|null,
+ * content, action: "add"|"remove", base: boolean }: the user's own
+ * reaction `content` (the exact string the server stores) on one message,
+ * as a target state. The message is named by its server id, or while it is
+ * pending by the client uuid of its post (sameTarget); base: whether the
+ * server held that reaction of the user when the first op of the key was
+ * queued.
+ */
+export const CHAT_REACTION = "chat.reaction";
+
+/**
+ * params { channelId, messageId: number|null, clientUuid: string|null,
+ * text, mentions: Mentions, baseBody: string|null, conflict? }: the text
+ * the user's own message is to say, sent as the browser composer's HTML
+ * (composeBody). baseBody: the server's body the edit was made against,
+ * read when the first op of the message was queued and kept by later
+ * ones; null while the message is a post not answered yet (filled from the
+ * post's answer, else read before the send). conflict: "changed" or
+ * "deleted" once the server's body was found to differ (a refusal, kept
+ * for « Reprendre »).
+ */
+export const CHAT_EDIT = "chat.edit";
+
+/**
+ * params { channelId, messageId: number|null, clientUuid: string|null,
+ * baseBody: string|null }: the user's own message emptied, as Odoo's delete
+ * does. baseBody: the server's body when it was queued, shown again when
+ * the server refuses the delete.
+ */
+export const CHAT_DELETE = "chat.delete";
+
+/**
+ * params { channelId, messageId: number, clientUuid: null, pinned: boolean,
+ * base: boolean, baseAt: string|null }: a sent message pinned in its
+ * channel or not, as a target state (set_message_pin is idempotent). base:
+ * whether the server held it pinned when the first op of the message was
+ * queued; baseAt: its pinned_at then, shown again when the pin is given up.
+ */
+export const CHAT_PIN = "chat.pin";
+
+/** The actions on one message, handled by runMessageAction, each a target state of its message (and content). */
+export const MESSAGE_KINDS = [CHAT_REACTION, CHAT_EDIT, CHAT_DELETE, CHAT_PIN];
+
+/**
+ * params { messageId: number, starred: boolean, base: boolean, channelId:
+ * number|null }: a message the user starred or not, as a target state. The
+ * star is the user's, on a message of any model: channelId only names the
+ * conversation of a channel message for the screens, the op is keyed by
+ * the message (queueAction with no conversation). base: whether the
+ * server held it starred when the first op of the message was queued.
+ */
+export const CHAT_STAR = "chat.star";
+
+/**
+ * params { messageIds: number[], cleared: number[] }: inbox items the user
+ * marked read, sent with Odoo's set_message_done (idempotent; a no-op
+ * sends nothing on the bus). One op per account: a later tap adds its ids
+ * (the union). cleared: the ids whose mailbox row the phone moved from the
+ * inbox to the history, each counted one less in inboxCounter (see
+ * overlayInbox).
+ */
+export const CHAT_INBOX_DONE = "chat.inbox_done";
+
+/**
+ * params { maxId: number, cleared: number[] }: « Tout marquer comme lu »,
+ * sent as Odoo's mark_all_as_read over the needaction messages whose id is
+ * at most maxId, the newest the phone showed: a mention arriving after the
+ * tap stays unread. One op per account, the larger bound kept; cleared as
+ * for CHAT_INBOX_DONE.
+ */
+export const CHAT_INBOX_ALL = "chat.inbox_all";
+
+/** The two inbox actions, whose rows lower the inbox counter until sent. */
+const INBOX_KINDS = [CHAT_INBOX_DONE, CHAT_INBOX_ALL];
+
+/**
+ * The actions of the account on a message that may have no chat_messages
+ * row (a record's, cached in chat_mailbox only), handled by
+ * runMailboxAction.
+ */
+export const MAILBOX_KINDS = [CHAT_STAR, ...INBOX_KINDS];
+
+/** The guarded edit route of the server module (1.3): it writes only over the body whose fingerprint it is given. */
+export const MODULE_EDIT_ROUTE = "/erplibre_mobile_chat/message/update_content";
+
+/** Odoo's edit route, also its delete (an emptied body, no attachment). */
+const ODOO_EDIT_ROUTE = "/mail/message/update_content";
+
+/**
+ * The fingerprint the guarded edit compares (`erplibre_body_fingerprint`):
+ * the SHA-256 hex of the body's UTF-8 bytes, the body as Store answers it;
+ * an empty body is hashed as "".
+ */
+export async function bodyFingerprint(body: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A route the server answered with a plain 404 (no JSON-RPC answer): the route does not exist there. */
+class RouteMissingError extends Error {}
+
+/** The re-read before a star found no message: it is gone, or no longer readable by the user. */
+class StarTargetGoneError extends Error {}
+
+/**
+ * An edit not written because the server's body is no longer the one it
+ * was made against: "changed", or "deleted" (the message emptied or gone).
+ * `store` is the server's answer holding the current message (the guarded
+ * route), `body` its body as re-read (null: no such message).
+ */
+class EditConflictError extends Error {
+  constructor(readonly conflict: "changed" | "deleted", readonly store: any, readonly body: string | null) {
+    super(`The message changed on the server since the edit was queued (${conflict}).`);
+  }
+}
+
+/**
+ * The server's body an edit or a delete of `message` is made against: the
+ * one the first edit queued on it keeps (`mine`: the ops naming it), else
+ * the cached body; null for a message without a server id yet.
+ */
+function baseBodyOf(message: ChatMessage, mine: OutboxOp[]): string | null {
+  const first = dependencyOrder(mine.filter((o) => o.kind === CHAT_EDIT))[0];
+  if (first) return first.params.baseBody ?? null;
+  return message.messageId === null ? null : message.body;
+}
+
+/**
+ * Whether `body` is still the body the post of an edit's message sent: it
+ * carries that post's marker, which a browser edit, rebuilding the body
+ * from its text, drops. An edit of a message the phone did not post has
+ * no client uuid and takes any body.
+ */
+const postBody = (op: OutboxOp, body: string): boolean => !op.params.clientUuid || bodyHasMarker(body, op.params.clientUuid);
+
+/**
+ * Whether the uploads of a post take the module route: a conversation's
+ * post says so in idempotentUpload (module 1.2), a reply on a record in
+ * useModule (module 1.4).
+ */
+const uploadsByModule = (post: OutboxOp): boolean =>
+  post.kind === CHAT_RECORD_POST ? !!post.params.useModule : !!post.params.idempotentUpload;
+
+/** The record of a reply's op, as its draft is keyed. */
+const draftThreadOf = (op: OutboxOp): DraftThread => ({ model: op.params.thread?.model, resId: op.params.thread?.resId });
+
+/** Whether a post may be on the server already: running, or sent once without the proof that nothing left (createSentAt). */
+const postStarted = (op: OutboxOp): boolean => op.status === "running" || !!op.params.createSentAt;
+
+/** The actions handled by runAction, each a target state of one conversation (or of the account). */
+const ACTION_KINDS = [
+  CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_LEAVE, CHAT_HIDE, CHAT_MUTE, CHAT_GLOBAL_MUTE, CHAT_REMOVE,
+  CHAT_NOTIFY, CHAT_GLOBAL_NOTIFY,
+];
+
+/** The actions of the whole account: no conversation to find, so never given up as vanished. */
+const ACCOUNT_KINDS = new Set([CHAT_GLOBAL_MUTE, CHAT_GLOBAL_NOTIFY]);
+
+/** The kinds whose blocked rows are notices. */
+const NOTICE_KINDS = [...ACTION_KINDS, ...MESSAGE_KINDS, ...MAILBOX_KINDS, CHAT_DROPPED, CHAT_FILE_REFUSED, CHAT_RECORD_POST];
+
+/** The kinds drain leaves to the upload lane (pumpUploads). */
+const LANE_KINDS = new Set([CHAT_UPLOAD]);
+
+/** Why a file of a post was not sent (CHAT_FILE_REFUSED). */
+export type FileRefusal = "too_big" | "missing" | "refused" | "not_found";
+
+/** The pending attachments of the upload routes: Odoo's placeholder record (mail/controllers/attachment.py). */
+const PENDING_MODEL = "mail.compose.message";
+/**
+ * The mimetypes Odoo's upload route resizes and re-encodes past 1920 px
+ * (ir.attachment._postprocess_contents, its default
+ * base.image_autoresize_extensions): their stored size is not the size sent.
+ */
+const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/bmp", "image/tiff"]);
+
+/** Whether findUploaded looks for the upload's attachment by name alone (a type Odoo's route may resize). */
+const foundByNameAlone = (op: OutboxOp): boolean => RESIZABLE_IMAGE_TYPES.has(String(op.params.mimetype ?? "").toLowerCase());
+
+/** The actions of the user a conversation taken away cancels, and counts in its CHAT_DROPPED notice. */
+const USER_ACTIONS = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_NOTIFY, CHAT_REMOVE, ...MESSAGE_KINDS]);
+
+/**
+ * Calls only the server module defines: a server whose module is older or
+ * gone answers them with AttributeError (no such method), which no retry
+ * gets past.
+ */
+const MODULE_ONLY = new Set([CHAT_REMOVE]);
+
+/** The actions Odoo would make the user a member for (the mute and notification routes join a non-member): sent only for a member. */
+const MEMBER_ONLY = new Set([CHAT_INVITE, CHAT_RENAME, CHAT_DESCRIBE, CHAT_MUTE, CHAT_NOTIFY]);
+
+/** The options of a post (ChatOutbox.queuePost). */
+export interface PostOpts {
+  files?: OutgoingFile[];
+  idempotentUpload?: boolean;
+  draftText?: string;
+  mentions?: Mentions;
+  replyTo?: MessageTarget | null;
+  /** The client uuid the post's op and marker take, drawn before it (a notification's reply); a new one by default. */
+  clientUuid?: string;
+  /**
+   * When a send of this post may already have reached Odoo (ISO date): the
+   * op starts stamped (createSentAt) and flagged maybeSent, so its first
+   * attempt waits out the quiet window and looks for the marker first.
+   */
+  maybeSentAt?: string;
+  /** The text without emoticon conversion, as native code composes a notification's reply: one body whichever side sends. */
+  plainText?: boolean;
+}
+
+/** Options of ChatOutbox.queueAction (see there). */
+interface QueueActionOpts {
+  /** Narrows the key past kind and conversation (the person removed, the message and emoji). */
+  same?: (o: OutboxOp) => boolean;
+  /** The params written into an op waiting, from its stored ones; the new params by default. */
+  merge?: (stored: Record<string, any>) => Record<string, any>;
+  /** Shows the action on the phone, with the conversation's id as queued and the op that holds the value (null when none). */
+  local?: (channelId: number | null, op: OutboxOp | null) => Promise<void>;
+  /** The op a new one waits for when no op of the key runs, before the conversation's create. */
+  after?: string | null;
+  /** Whether merged params leave the server as it stood: nothing is sent. */
+  noop?: (merged: Record<string, any>) => boolean;
+  /** Whether an op whose send may have reached the server (params.sentAt) keeps its values, as a running one. */
+  sentRuns?: boolean;
+}
+
+/** Odoo's "muted until I turn it back on", as mute_until_dt carries it. */
+export const MUTE_FOREVER_DT = "9999-12-31 23:59:59";
+
+/**
+ * The `minutes` of /discuss/settings/mute for a mute that ends at `until`,
+ * computed when the request leaves: -1 for "forever", false for no mute or
+ * one already over (a mute queued longer than it lasts unmutes), otherwise
+ * the minutes left, rounded up.
+ */
+export function muteMinutes(until: string | null, now: Date): number | false {
+  if (until === "forever") return -1;
+  if (!until) return false;
+  const left = Math.ceil((Date.parse(until) - now.getTime()) / 60000);
+  return Number.isFinite(left) && left > 0 ? left : false;
+}
+
+export type CreateMode = "dm" | "group" | "channel";
+
+/** Odoo's channel_type of each create mode. */
+const TYPE_OF: Record<CreateMode, ChannelType> = { dm: "chat", group: "group", channel: "channel" };
+
+/**
+ * How far before the stamp of a lost create the fingerprint search looks:
+ * create_date is the server's clock and createSentAt the phone's.
+ */
+export const CREATE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+const CHANNEL_MODEL = "discuss.channel";
+
+/** Server exceptions a retry cannot get past: access, rules, a channel that is gone. */
+const REFUSED_ERRORS = new Set([
+  "odoo.exceptions.AccessError",
+  "odoo.exceptions.ValidationError",
+  "odoo.exceptions.UserError",
+  "odoo.exceptions.MissingError",
+  "werkzeug.exceptions.NotFound",
+  "werkzeug.exceptions.Forbidden",
+]);
+
+/** Whether Odoo refused for good (REFUSED_ERRORS): no retry gets past it. */
+export const isRefused = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && REFUSED_ERRORS.has(e.odooName);
+
+/** The refusals of an action on a message that mean the message is gone (or no longer the user's to reach). */
+const VANISHED_ERRORS = new Set(["werkzeug.exceptions.NotFound", "odoo.exceptions.MissingError"]);
+
+const isVanished = (e: unknown): boolean => e instanceof OdooRpcError && e.odooName !== null && VANISHED_ERRORS.has(e.odooName);
+
+/** Kept with MessageTarget (models/chat) so the repository compares targets too; named here for the outbox's callers. */
+export { sameTarget };
+
+/** An edit given up because the message changed or went on the server: a notice that keeps its text (« Reprendre »). */
+function isRefusedEdit(op: Pick<OutboxOp, "kind" | "status" | "params">): boolean {
+  return op.kind === CHAT_EDIT && op.status === "blocked" && op.params.blockedReason === "changed";
+}
+
+/** The message an action on a message names, from its params (MESSAGE_KINDS). */
+export function targetOf(op: Pick<OutboxOp, "params">): MessageTarget {
+  return { messageId: op.params.messageId ?? null, clientUuid: op.params.clientUuid ?? null };
+}
+
+/**
+ * The key an action is queued under: its kind, conversation, person
+ * removed, message (the client uuid of its post when it has one, else its
+ * id) and content. Ops of one key are one action, a later one superseding
+ * an earlier. A star is the account's, keyed by its message alone: the
+ * conversation it names is only for the screens.
+ */
+export function targetKey(op: Pick<OutboxOp, "kind" | "params">): string {
+  const p = op.params;
+  const message = p.clientUuid ? `u${p.clientUuid}` : p.messageId != null ? `m${p.messageId}` : "";
+  const channel = op.kind === CHAT_STAR ? null : p.channelId ?? null;
+  return JSON.stringify([op.kind, channel, p.partnerId ?? null, message, p.content ?? null]);
+}
+
+/**
+ * A reaction group with the user's own reaction in (`on`) or out: the
+ * count and the partners follow, the user put first. Unchanged when it
+ * already is; null when nobody is left.
+ */
+function ownReaction<G extends { count: number; selfReacted: boolean; partnerIds: number[] }>(
+  g: G,
+  on: boolean,
+  self: number | null,
+): G | null {
+  if (g.selfReacted === on) return g.count > 0 ? g : null;
+  const others = g.partnerIds.filter((id) => id !== self);
+  const count = Math.max(0, g.count + (on ? 1 : -1));
+  return count > 0 ? { ...g, selfReacted: on, count, partnerIds: on && self !== null ? [self, ...others] : others } : null;
+}
+
+/** Odoo's "YYYY-MM-DD HH:MM:SS" UTC string for a date. */
+const odooDate = (d: Date): string => d.toISOString().slice(0, 19).replace("T", " ");
+
+/**
+ * Whether a create or join op may have reached the server: it is running,
+ * or ran before without the proof that nothing was sent (a create keeps
+ * createSentAt then; a join has no such proof).
+ */
+const createReached = (op: OutboxOp): boolean =>
+  op.status === "running" || (op.attempts > 0 && (op.kind !== CHAT_CREATE || !!op.params.createSentAt));
+
+const emptyDelta = (): StoreDelta => ({
+  channels: [],
+  deletedChannelIds: [],
+  members: [],
+  deletedMemberIds: [],
+  messages: [],
+  attachments: [],
+  deletedAttachmentIds: [],
+  partners: [],
+  inboxCounter: null,
+  selfPartnerId: null,
+});
+
+/** The mute_until_dt a queued `until` stands for on the phone. */
+export const muteDt = (until: string | null): string | null =>
+  until === "forever" ? MUTE_FOREVER_DT : until ? odooDate(new Date(until)) : null;
+
+/**
+ * The chat's own outbox: posts and reads queued in sync_outbox under the
+ * pseudo note CHAT_NOTE, drained by flush() and never by the note sync.
+ *
+ * Every post body ends with a hidden comment carrying the op's client uuid;
+ * with the server module (useModule) the uuid also travels in post_data.
+ * A send stamps createSentAt, and a retry first waits out
+ * CREATE_QUIET_WINDOW_MS (the first request may still be running, its row
+ * not yet visible to a search), then searches the channel for the comment
+ * among the user's own messages and adopts the message it finds instead of
+ * posting again. A send that provably never reached the server (offline
+ * before it, or a connection that failed: RequestNotSentError) gives the
+ * stamp back, so its retry waits for no window; a timeout or a lost answer
+ * keeps it.
+ */
+export class ChatOutbox {
+  /** Whether a server may answer now; ChatService points it at its own. */
+  isOnline: () => Promise<boolean> = () => networkService.isOnline();
+  /**
+   * Runs a write of server counters in the account's queue of such writers;
+   * ChatService points it at its own (see the class there), so a load
+   * reading before a post answered never writes its older counters after it.
+   */
+  serial: <T>(configId: string, task: () => Promise<T>) => Promise<T> = (_configId, task) => task();
+  /**
+   * Called once a create or a join is written to the cache, with the id
+   * the phone used and the server's (equal for a join or a direct message
+   * pinned again); ChatService resubscribes and tells the screens.
+   */
+  created: (configId: string, tempId: number, channelId: number) => void = () => {};
+  /** Called once the server took a leave; ChatService resubscribes and tells the screens. */
+  left: (configId: string, channelId: number) => void = () => {};
+  /** Called after an action wrote to the cache or was given up; ChatService tells the screens. */
+  changed: (configId: string, channelId: number | null) => void = () => {};
+  /**
+   * Called when the server answered a call of the module as if the module
+   * were missing; ChatService probes the module state again.
+   */
+  moduleRefused: (configId: string) => Promise<void> = async () => {};
+  /**
+   * Whether an edit takes the guarded route of the module (1.3) rather
+   * than a re-read before Odoo's; ChatService points it at its features.
+   */
+  editGuard: (configId: string) => Promise<boolean> = async () => false;
+  /**
+   * Whether a star takes the module's idempotent set (1.4) rather than a
+   * re-read before Odoo's toggle; ChatService points it at its features.
+   */
+  starIdempotent: (configId: string) => Promise<boolean> = async () => false;
+  /**
+   * Called once the server took an inbox op, to read its counters again
+   * (ChatService loads the account): a done of an item already read
+   * elsewhere changes nothing on the server and sends no bus event.
+   */
+  inboxSent: (configId: string) => Promise<void> = async () => {};
+  /** The app's chat files: the outgoing ones this outbox owns. ChatService sets it with the transfer. */
+  files: ChatFiles = deviceChatFiles;
+  /** Uploads the files; ChatService sets it. Without one an upload fails and waits for its retry. */
+  transfer: ChatTransfer | null = null;
+  /** Whether the phone is on Wi-Fi now: attachmentSettings().wifiOnly holds uploads until it is. */
+  onWifi: () => Promise<boolean> = () => deviceAttachmentIO.onWifi();
+
+  /** Per account, the end of the queue of exclusive() tasks. */
+  private locks = new Map<string, Promise<void>>();
+  /** Per account, the ids of the upload ops the lane runs now. */
+  private lane = new Map<string, Set<string>>();
+  /** Per account, the lane's work still settling (pumps, uploads, the flushes after them), for whenIdle. */
+  private laneWork = new Map<string, Set<Promise<unknown>>>();
+  /** Transfer id of each upload op on the wire, for a cancel. */
+  private transfers = new Map<string, string>();
+  /** Upload ops told to stop before their transfer began: it never starts. */
+  private stopped = new Set<string>();
+  /**
+   * Config ids whose lane starts no upload, with the number of pauseUploads
+   * not yet resumed: two renames that share an id each keep it paused.
+   */
+  private paused = new Map<string, number>();
+  /** Bytes sent so far, by transfer id. */
+  private progress = new Map<string, { localUuid: string; done: number; total: number }>();
+  /** Subscribes to the transport's progress events; replaced by setProgressSource. */
+  private progressSource: ((fn: (p: TransferProgress) => void) => () => void) | null = null;
+  private progressOff: (() => void) | null = null;
+
+  constructor(
+    private db: DatabaseService,
+    private rpc: OdooRpcClient,
+    private outbox: OutboxService,
+    private repo: ChatRepository,
+    private now: () => Date = () => new Date(),
+  ) {
+    outbox.registerHandler(CHAT_POST, (creds, op) => this.runPost(creds, op));
+    outbox.registerHandler(CHAT_RECORD_POST, (creds, op) => this.runRecordPost(creds, op));
+    outbox.registerHandler(CHAT_READ, (creds, op) => this.runRead(creds, op));
+    outbox.registerHandler(CHAT_CREATE, (creds, op) => this.runCreate(creds, op));
+    outbox.registerHandler(CHAT_JOIN, (creds, op) => this.runJoin(creds, op));
+    outbox.registerHandler(CHAT_UPLOAD, (creds, op) => this.runUpload(creds, op));
+    for (const kind of ACTION_KINDS) outbox.registerHandler(kind, (creds, op) => this.runAction(creds, op));
+    for (const kind of MESSAGE_KINDS) outbox.registerHandler(kind, (creds, op) => this.runMessageAction(creds, op));
+    for (const kind of MAILBOX_KINDS) outbox.registerHandler(kind, (creds, op) => this.runMailboxAction(creds, op));
+  }
+
+  /**
+   * Runs `task` once the account's earlier exclusive() tasks settled: a
+   * post being queued and a temporary id being swapped never interleave,
+   * so a post never lands under an id the swap already left. An action
+   * is queued and shown in it (queueAction), so a writer of server values
+   * that lays the queued ops over its delta and writes it in one
+   * exclusive() task never writes over a change queued after its read of
+   * the ops. Short cache work only; never awaits serial().
+   */
+  exclusive<T>(configId: string, task: () => Promise<T>): Promise<T> {
+    const run = (this.locks.get(configId) ?? Promise.resolve()).then(task);
+    const tail = run.then(() => undefined, () => undefined);
+    this.locks.set(configId, tail);
+    void tail.then(() => {
+      if (this.locks.get(configId) === tail) this.locks.delete(configId);
+    });
+    return run;
+  }
+
+  /** Whether a message of the account, cached or queued, or an op of its outbox already carries this client uuid. */
+  async knowsClientUuid(configId: string, clientUuid: string): Promise<boolean> {
+    if (await this.repo.messageByClientUuid(configId, clientUuid)) return true;
+    return (await this.db.getOutboxOpsForConfig(configId)).some((o) => o.clientUuid === clientUuid);
+  }
+
+  /**
+   * Runs a draft read or write of the account in its exclusive() queue,
+   * with `channelId` taken as the server's id once its create settled: a
+   * draft is never written under a temporary id the swap already left, a
+   * post being queued sees the draft as it was asked, and a read sees every
+   * write asked before it.
+   */
+  draftTask<T>(configId: string, channelId: number | null, task: (channelId: number) => Promise<T>): Promise<T> {
+    return this.exclusive(configId, async () =>
+      task(channelId === null ? 0 : (await this.realIdOf(configId, channelId)) ?? channelId));
+  }
+
+  /** The server id of a conversation created under `tempId` once its create settled, else null (stored, so it holds across restarts). */
+  realIdOf(configId: string, tempId: number): Promise<number | null> {
+    return this.repo.realIdOf(configId, tempId);
+  }
+
+  /**
+   * Stores the text as a pending message and queues its post. The op waits
+   * for the newest unfinished post of the same channel, so a failed post
+   * holds the ones written after it; the first post of a conversation still
+   * being created (or joined) waits for that op. A temporary id whose create
+   * already settled is taken as the server's id. A conversation that cannot
+   * take a post (one whose create was refused, or a temporary id with no
+   * create left) keeps the text as a failed message and queues nothing: a
+   * negative id never reaches the server. So does a conversation the user
+   * is leaving or left with texts unsent; its files are stored refused
+   * ("channel") beside the message.
+   *
+   * With files (staged under the account's out directory), one CHAT_UPLOAD
+   * per file goes between that tail and the post, in pick order:
+   * tail ← upload₁ ← … ← uploadₙ ← post, so each file is uploaded just
+   * before its post and a later post of the channel waits for all of it.
+   * Their rows are stored "queued" under the post's client uuid: a file
+   * kept as the conversation's draft is given to the post in place
+   * (ChatRepository.queueDrafts), its row and staged file kept, and the
+   * post's `drafts` names those. The ops are stored "incomplete" until the
+   * rows and the message are written (recoverIncomplete repairs a cut). A
+   * post that cannot be queued deletes the other staged files and gives the
+   * draft files back to the draft. idempotentUpload sends the files through
+   * the module route (module 1.2). draftText is the composer's text as
+   * the draft holds it: kept in the post's params, it is removed from the
+   * draft (ChatRepository.removeDraftText) in this same step once the
+   * message is stored, best-effort (a failure is logged, the post stays);
+   * recoverIncomplete finishes a removal a kill cut. A post not stored
+   * leaves the draft as it was.
+   *
+   * mentions: the picks of the composer, the bubble showing the body the
+   * browser would post. replyTo: the message it answers, named as the
+   * cache holds it (messageOf; one not cached as given); the bubble
+   * carries it as parentId, or parentClientUuid while it has no server id.
+   */
+  queuePost(
+    configId: string,
+    channelId: number,
+    text: string,
+    useModule: boolean,
+    opts: PostOpts = {},
+  ): Promise<ChatMessage> {
+    return this.exclusive(configId, async () =>
+      this.queuePostNow(configId, (await this.realIdOf(configId, channelId)) ?? channelId, text, useModule, opts));
+  }
+
+  /** The rows of a post's files, in pick order; a reply on a record names it (`thread`, channelId 0). */
+  private outgoingRows(
+    configId: string,
+    channelId: number,
+    postClientUuid: string,
+    files: OutgoingFile[],
+    state: "queued" | "refused",
+    thread?: DraftThread,
+  ): ChatAttachment[] {
+    return files.map((f, seq) => ({
+      configId,
+      channelId,
+      messageId: null,
+      attachmentId: null,
+      localUuid: f.localUuid,
+      postClientUuid,
+      seq,
+      name: f.name,
+      mimetype: f.mimetype,
+      size: f.size,
+      checksum: null,
+      voice: f.voice,
+      thumbPath: null,
+      thumbBytes: 0,
+      originalPath: f.path,
+      originalBytes: f.size,
+      state,
+      error: state === "refused" ? "channel" : null,
+      lastOpenedAt: null,
+      createdAt: this.now().toISOString(),
+      threadModel: thread?.model ?? null,
+      threadId: thread?.resId ?? null,
+    }));
+  }
+
+  /** The params of the upload op of one file: on its channel, or on the record (`thread`) a reply goes to. */
+  private uploadParams(channelId: number | undefined, f: OutgoingFile, useModule: boolean, thread?: RecordThread): Record<string, any> {
+    return {
+      ...(thread ? { thread } : { channelId }),
+      localUuid: f.localUuid,
+      path: f.path,
+      name: f.name,
+      mimetype: f.mimetype,
+      size: f.size,
+      voice: f.voice,
+      useModule,
+    };
+  }
+
+  private async queuePostNow(
+    configId: string,
+    channelId: number,
+    text: string,
+    useModule: boolean,
+    opts: PostOpts,
+  ): Promise<ChatMessage> {
+    const files = opts.files ?? [];
+    const mentions = opts.mentions ?? EMPTY_MENTIONS;
+    const body = composeBody(text, mentions, opts.plainText ? [] : await emojiConversions()).body;
+    const parent = opts.replyTo ? await this.parentOf(configId, opts.replyTo) : null;
+    const parentFields = {
+      parentId: parent?.messageId ?? null,
+      parentClientUuid: parent && parent.messageId === null ? parent.clientUuid : null,
+    };
+    const drafts = new Set<string>();
+    for (const f of files) {
+      if ((await this.repo.outgoingFile(configId, f.localUuid))?.state === "draft") drafts.add(f.localUuid);
+    }
+    const fresh = files.filter((f) => !drafts.has(f.localUuid));
+    const channel = await this.repo.channel(configId, channelId);
+    if (channel?.createFailed || (channelId < 0 && !channel?.createOpId) || (await this.leaving(configId, channelId))) {
+      const failed: ChatMessage = {
+        configId,
+        channelId,
+        messageId: null,
+        clientUuid: opts.clientUuid ?? uuidv4(),
+        authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
+        body,
+        date: odooDate(this.now()),
+        messageType: "comment",
+        status: "failed",
+        outboxOpId: null,
+        writeDate: null,
+        ...parentFields,
+      };
+      await this.repo.putPending(failed);
+      if (files.length > 0) await this.storeFiles(configId, channelId, failed.clientUuid, files, drafts, "refused");
+      await this.releaseDraftText(configId, channelId, opts.draftText, undefined, parent);
+      return failed;
+    }
+    const all = await this.db.getOutboxOpsForConfig(configId);
+    // The tail of the channel's chain: the unfinished post no other post or upload waits for (an action on its message may)
+    const previous = all
+      .filter((o) => o.kind === CHAT_POST && o.params.channelId === channelId)
+      .filter((c) => !all.some((o) => o.dependsOn === c.id && (o.kind === CHAT_POST || o.kind === CHAT_UPLOAD)))
+      .at(-1);
+    const createOpId = channel?.createOpId ?? null;
+    const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
+    const uploads: OutboxOp[] = [];
+    let tail = previous?.id ?? creating;
+    const incomplete = files.length > 0;
+    let op: OutboxOp;
+    try {
+      for (const f of files) {
+        const up = await this.outbox.enqueue({
+          noteId: CHAT_NOTE,
+          configId,
+          kind: CHAT_UPLOAD,
+          params: this.uploadParams(channelId, f, !!opts.idempotentUpload),
+          dependsOn: tail,
+          status: "incomplete",
+        });
+        uploads.push(up);
+        tail = up.id;
+      }
+      op = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_POST,
+        params: {
+          ...(incomplete
+            ? {
+              channelId, text, mentions, parent, useModule, files: files.map((f) => f.localUuid),
+              idempotentUpload: !!opts.idempotentUpload,
+              ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
+            }
+            : { channelId, text, mentions, parent, useModule }),
+          ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
+          ...(opts.maybeSentAt ? { createSentAt: opts.maybeSentAt, maybeSent: true } : {}),
+          ...(opts.plainText ? { plainText: true } : {}),
+        },
+        dependsOn: tail,
+        ...(incomplete ? { status: "incomplete" as const } : {}),
+        ...(opts.clientUuid ? { clientUuid: opts.clientUuid } : {}),
+      });
+    } catch (e: unknown) {
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.removeFiles(fresh.map((f) => f.path));
+      throw e;
+    }
+    const message: ChatMessage = {
+      configId,
+      channelId,
+      messageId: null,
+      clientUuid: op.clientUuid,
+      authorPartnerId: (await this.repo.sourceState(configId)).selfPartnerId,
+      body,
+      date: odooDate(this.now()),
+      messageType: "comment",
+      status: "pending",
+      outboxOpId: op.id,
+      writeDate: null,
+      ...parentFields,
+    };
+    try {
+      if (incomplete) await this.storeFiles(configId, channelId, op.clientUuid, files, drafts, "queued");
+      await this.repo.putPending(message);
+      // The post last: no drain sends it before its uploads are queued
+      for (const up of uploads) await this.outbox.complete(up.id, {});
+      if (incomplete) await this.outbox.complete(op.id, {});
+    } catch (e: unknown) {
+      // No op goes out without its bubble
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.outbox.cancel(op.id);
+      if (incomplete) {
+        await this.repo.backToDraft(configId, [...drafts]);
+        await this.dropOutgoing(configId, fresh.map((f) => f.localUuid));
+        // A cut inside putOutgoing leaves files no row names
+        await this.removeFiles(fresh.map((f) => f.path));
+      }
+      throw e;
+    }
+    await this.releaseDraftText(configId, channelId, opts.draftText, undefined, parent);
+    return message;
+  }
+
+  /**
+   * Queues a reply in the chatter of the record an inbox item belongs to
+   * (CHAT_RECORD_POST): an internal note when `note`, else a message to the
+   * record's followers. Its files go first, one CHAT_UPLOAD each on the
+   * record in pick order, and the reply waits for the last of them, as
+   * queuePost chains a post (the reply queued before it on the same record
+   * holds the first). Their rows carry the record and channel_id 0; a file
+   * kept in the record's draft is given to the reply in place. The ops are
+   * stored "incomplete" until the rows are written (recoverIncomplete
+   * repairs a cut); a reply that cannot be stored deletes the other staged
+   * files, gives the draft files back and throws. idempotent: module 1.4
+   * (the module upload route on the record, the client uuid in the post).
+   * draftText is the composer's text as the record's draft holds it,
+   * removed from that draft once the reply is stored (best-effort, as for a
+   * post). Returns the reply's op. An item of a conversation (discuss.channel)
+   * is refused before anything is stored: a mention is answered in its
+   * conversation, by a post.
+   */
+  queueRecordPost(
+    configId: string,
+    item: ChatMailboxItem,
+    text: string,
+    mentions: Mentions,
+    files: OutgoingFile[],
+    note: boolean,
+    opts: { idempotent: boolean; draftText?: string },
+  ): Promise<OutboxOp> {
+    if (item.threadModel === "discuss.channel") {
+      return Promise.reject(new Error("A discuss.channel item is answered by a post in its conversation, not a record reply."));
+    }
+    return this.exclusive(configId, () => this.queueRecordPostNow(configId, item, text, mentions, files, note, opts));
+  }
+
+  private async queueRecordPostNow(
+    configId: string,
+    item: ChatMailboxItem,
+    text: string,
+    mentions: Mentions,
+    files: OutgoingFile[],
+    note: boolean,
+    opts: { idempotent: boolean; draftText?: string },
+  ): Promise<OutboxOp> {
+    const thread: RecordThread = { model: item.threadModel, resId: item.threadId, recordName: item.recordName };
+    const place: DraftThread = { model: thread.model, resId: thread.resId };
+    const drafts = new Set<string>();
+    for (const f of files) {
+      if ((await this.repo.outgoingFile(configId, f.localUuid))?.state === "draft") drafts.add(f.localUuid);
+    }
+    const fresh = files.filter((f) => !drafts.has(f.localUuid));
+    const all = await this.db.getOutboxOpsForConfig(configId);
+    const onRecord = (o: OutboxOp) => o.kind === CHAT_RECORD_POST && o.params.thread?.model === thread.model
+      && o.params.thread?.resId === thread.resId;
+    // The tail of the record's chain: its unfinished reply no other reply or upload waits for; a refused
+    // one (blocked, a notice) holds nothing back
+    const previous = all
+      .filter((c) => onRecord(c) && c.status !== "blocked")
+      .filter((c) => !all.some((o) => o.dependsOn === c.id && (o.kind === CHAT_RECORD_POST || o.kind === CHAT_UPLOAD)))
+      .at(-1);
+    const uploads: OutboxOp[] = [];
+    let tail = previous?.id ?? null;
+    const incomplete = files.length > 0;
+    let op: OutboxOp;
+    try {
+      for (const f of files) {
+        const up = await this.outbox.enqueue({
+          noteId: CHAT_NOTE,
+          configId,
+          kind: CHAT_UPLOAD,
+          params: this.uploadParams(undefined, f, opts.idempotent, thread),
+          dependsOn: tail,
+          status: "incomplete",
+        });
+        uploads.push(up);
+        tail = up.id;
+      }
+      op = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_RECORD_POST,
+        params: {
+          thread, parentId: item.messageId, text, mentions, note, useModule: opts.idempotent,
+          ...(incomplete
+            ? {
+              files: files.map((f) => f.localUuid),
+              ...(drafts.size > 0 ? { drafts: files.filter((f) => drafts.has(f.localUuid)).map((f) => f.localUuid) } : {}),
+            }
+            : {}),
+          ...(opts.draftText !== undefined ? { draftText: opts.draftText } : {}),
+        },
+        dependsOn: tail,
+        ...(incomplete ? { status: "incomplete" as const } : {}),
+      });
+    } catch (e: unknown) {
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.removeFiles(fresh.map((f) => f.path));
+      throw e;
+    }
+    if (incomplete) {
+      try {
+        await this.storeFiles(configId, 0, op.clientUuid, files, drafts, "queued", place);
+        // The reply last: no drain sends it before its uploads are queued
+        for (const up of uploads) await this.outbox.complete(up.id, {});
+        await this.outbox.complete(op.id, {});
+      } catch (e: unknown) {
+        for (const up of uploads) await this.outbox.cancel(up.id);
+        await this.outbox.cancel(op.id);
+        await this.repo.backToDraft(configId, [...drafts]);
+        await this.dropOutgoing(configId, fresh.map((f) => f.localUuid));
+        // A cut inside putOutgoing leaves files no row names
+        await this.removeFiles(fresh.map((f) => f.path));
+        throw e;
+      }
+      op = { ...op, status: "queued" };
+    }
+    await this.releaseDraftText(configId, place, opts.draftText);
+    return op;
+  }
+
+  /**
+   * The replies on records the account still has to send (CHAT_RECORD_POST
+   * ops not given up), by the inbox message they answer (parentId), oldest
+   * first: their text, whether each is a note, and how many files it holds.
+   */
+  async pendingRecordReplies(configId: string): Promise<Map<number, { text: string; note: boolean; files: number }[]>> {
+    const out = new Map<number, { text: string; note: boolean; files: number }[]>();
+    for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+      if (o.kind !== CHAT_RECORD_POST || o.status === "blocked") continue;
+      const list = out.get(o.params.parentId) ?? [];
+      list.push({ text: o.params.text ?? "", note: o.params.note !== false, files: (o.params.files ?? []).length });
+      out.set(o.params.parentId, list);
+    }
+    return out;
+  }
+
+  /** A reply target as the cache names its message (messageOf): its server id and client uuid; one not cached as given. */
+  private async parentOf(configId: string, target: MessageTarget): Promise<MessageTarget> {
+    const message = await this.repo.messageOf(configId, target);
+    return message ? { messageId: message.messageId, clientUuid: message.clientUuid } : { ...target };
+  }
+
+  /**
+   * The server id a post sends as parent_id, read at its send: the
+   * parent's cached row (a pending parent has one once its own post
+   * settled), else the id it was named by. Null, left out of the post, for
+   * no parent or one that never got an id (dropped or failed before it
+   * was sent).
+   */
+  private async parentIdOf(configId: string, parent: MessageTarget | null | undefined): Promise<number | null> {
+    if (!parent) return null;
+    return (await this.repo.messageOf(configId, parent))?.messageId ?? parent.messageId;
+  }
+
+  /**
+   * Removes a stored post's text from the draft, with its reply target when
+   * it is the post's parent (removeDraftText, `notAfter` passed on); a
+   * failure is logged, the post is not touched.
+   */
+  private async releaseDraftText(
+    configId: string,
+    channelId: number | DraftThread,
+    text: unknown,
+    notAfter?: string,
+    parent?: MessageTarget | null,
+  ): Promise<void> {
+    if (typeof text !== "string") return;
+    try {
+      await this.repo.removeDraftText(configId, channelId, text, notAfter, parent ?? null);
+    } catch (e: unknown) {
+      console.warn("chat: a sent text stays in the draft", e);
+    }
+  }
+
+  /**
+   * Stores the rows of a post's files, each at its position: a draft file's
+   * row is given to the post in place, any other is written new. A reply
+   * on a record names it (`thread`, with channelId 0).
+   */
+  private async storeFiles(
+    configId: string,
+    channelId: number,
+    postClientUuid: string,
+    files: OutgoingFile[],
+    drafts: Set<string>,
+    state: "queued" | "refused",
+    thread?: DraftThread,
+  ): Promise<void> {
+    const rows = this.outgoingRows(configId, channelId, postClientUuid, files, state, thread);
+    const fresh = rows.filter((r) => !drafts.has(r.localUuid!));
+    if (fresh.length > 0) await this.repo.putOutgoing(fresh);
+    const given = files.map((file, seq) => ({ file, seq })).filter(({ file }) => drafts.has(file.localUuid));
+    if (given.length > 0) await this.repo.queueDrafts(configId, channelId, postClientUuid, given, state, thread);
+  }
+
+  /** The paths given whose file is not a draft's: those a cleanup may delete. */
+  private async notDrafts(configId: string, files: Record<string, any>[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const f of files) {
+      const row = typeof f.localUuid === "string" ? await this.repo.outgoingFile(configId, f.localUuid) : null;
+      if (row?.state !== "draft") out.push(String(f.path ?? ""));
+    }
+    return out;
+  }
+
+  /** Removes outgoing rows by local uuid and deletes their files (the outbox owns them). */
+  private async dropOutgoing(configId: string, localUuids: string[]): Promise<void> {
+    await this.removeFiles(await this.repo.deleteOutgoing(configId, localUuids));
+  }
+
+  /** Deletes files (with their out/<localUuid>/ directory); a missing one is fine, a failed delete is logged. */
+  private async removeFiles(paths: string[]): Promise<void> {
+    for (const path of paths) {
+      if (!path) continue;
+      try {
+        await removeChatFile(this.files, path);
+      } catch (e: unknown) {
+        console.warn("chat: an outgoing file was not deleted", e);
+      }
+    }
+  }
+
+  /**
+   * Queues "read up to lastMessageId" for a channel. One op waits per
+   * channel: a later call raises its message id (never lowers it) and
+   * keeps mentions once set. An op already running has sent its values, so
+   * a call meanwhile queues a second op behind it.
+   */
+  async queueRead(configId: string, channelId: number, lastMessageId: number, mentions: boolean): Promise<void> {
+    const same = (await this.outbox.findAll(CHAT_NOTE, configId, CHAT_READ))
+      .filter((o) => o.params.channelId === channelId);
+    const waiting = same.find((o) => o.status !== "running");
+    if (waiting) {
+      await this.outbox.setParams(waiting.id, {
+        lastMessageId: Math.max(waiting.params.lastMessageId ?? 0, lastMessageId),
+        mentions: !!waiting.params.mentions || mentions,
+      });
+      // The row may have started or finished between the lookup and the write
+      const now = await this.db.getOutboxOp(waiting.id);
+      if (now && now.status !== "running") return;
+      await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_READ,
+        params: { channelId, lastMessageId, mentions },
+        dependsOn: now?.id ?? null,
+      });
+      return;
+    }
+    await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_READ,
+      params: { channelId, lastMessageId, mentions },
+      dependsOn: same.at(-1)?.id ?? null,
+    });
+  }
+
+  /**
+   * Queues the creation of a conversation and writes it to the cache at
+   * once under `channelId`: a temporary id (negative, from
+   * ChatRepository.newTemporaryId) for a new one, or the id of a cached
+   * hidden direct message to pin again. A new conversation is a member,
+   * pinned row carrying createOpId, with placeholder members (self, then
+   * the people invited; ids tempId·1000 − i, never a server's) so a group
+   * without a name shows their names. The op is stored "incomplete" until
+   * the row is written, so no drain sends a create whose row is missing.
+   */
+  async queueCreate(
+    configId: string,
+    channelId: number,
+    p: { mode: CreateMode; partnerIds: number[]; name: string; groupId: number | false; useModule: boolean },
+  ): Promise<OutboxOp> {
+    const op = await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_CREATE,
+      params: { channelId, ...p },
+      status: "incomplete",
+    });
+    try {
+      if (channelId >= 0) {
+        // Shown again: a hide still waiting would undo it
+        for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+          if (o.kind === CHAT_HIDE && o.params.channelId === channelId && o.status !== "running") await this.outbox.cancel(o.id);
+        }
+        await this.repo.patchChannel(configId, channelId, { isPinned: true, createOpId: op.id });
+      } else {
+        const self = (await this.repo.sourceState(configId)).selfPartnerId;
+        const people = [...(self !== null ? [self] : []), ...p.partnerIds.filter((id) => id !== self)];
+        await this.repo.applyDelta(configId, {
+          channels: [{
+            channelId,
+            channelType: TYPE_OF[p.mode],
+            name: p.mode === "dm" ? "" : p.name,
+            isMember: true,
+            isPinned: true,
+            lastInterestDt: odooDate(this.now()),
+            correspondentPartnerId: p.mode === "dm" ? (p.partnerIds[0] ?? null) : null,
+            memberCount: people.length,
+            groupPublicId: p.mode === "channel" && p.groupId !== false ? p.groupId : null,
+            createOpId: op.id,
+          }],
+          deletedChannelIds: [],
+          members: people.map((partnerId, i) => ({ memberId: channelId * 1000 - i, channelId, partnerId })),
+          deletedMemberIds: [],
+          messages: [],
+          attachments: [],
+          deletedAttachmentIds: [],
+          partners: [],
+          inboxCounter: null,
+          selfPartnerId: null,
+        });
+      }
+    } catch (e: unknown) {
+      await this.outbox.cancel(op.id);
+      throw e;
+    }
+    await this.outbox.complete(op.id, {});
+    return op;
+  }
+
+  /**
+   * Queues joining a public channel. The cached row (written when missing,
+   * from `name`) turns member at once and carries the op as createOpId, so
+   * posts written meanwhile wait for the join and a load keeps it.
+   */
+  async queueJoin(configId: string, channelId: number, name = ""): Promise<OutboxOp> {
+    const op = await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_JOIN,
+      params: { channelId },
+      status: "incomplete",
+    });
+    try {
+      const cached = await this.repo.channel(configId, channelId);
+      await this.repo.applyDelta(configId, {
+        channels: [{ channelId, ...(cached ? {} : { channelType: "channel" as const, name }), isMember: true, createOpId: op.id }],
+        deletedChannelIds: [],
+        members: [],
+        deletedMemberIds: [],
+        messages: [],
+        attachments: [],
+        deletedAttachmentIds: [],
+        partners: [],
+        inboxCounter: null,
+        selfPartnerId: null,
+      });
+    } catch (e: unknown) {
+      await this.outbox.cancel(op.id);
+      throw e;
+    }
+    await this.outbox.complete(op.id, {});
+    return op;
+  }
+
+  /**
+   * Whether the user is leaving the conversation (its leave is queued, not
+   * refused) or left it with texts unsent: nothing more of it goes to the
+   * server.
+   */
+  private async leaving(configId: string, channelId: number): Promise<boolean> {
+    if ((await this.repo.channel(configId, channelId))?.leftUnsent) return true;
+    return (await this.db.getOutboxOpsForConfig(configId))
+      .some((o) => o.kind === CHAT_LEAVE && o.params.channelId === channelId && o.status !== "blocked");
+  }
+
+  /**
+   * Queues an action as a target state: one op per account, kind and
+   * conversation (and `same`, e.g. the person removed) waits at a time. A
+   * later call writes its value into every op of that key still waiting
+   * (`merge`: the stored params to the new ones; the last value by
+   * default), so whichever of them goes out, the server ends on the last
+   * value; one that failed and waits for its retry is among them. An op
+   * already running has sent its values, so a call meanwhile queues a
+   * second op behind it, as when the newest waiting op starts, finishes or
+   * is given up between the lookup and the write. An op the outbox gave up on
+   * (blocked, a notice) is replaced. A conversation still being created or
+   * joined holds the op until that op is done; the swap then moves it to the
+   * server's id. `after` (the post of a message not sent yet) holds a new op
+   * the same way, when no op of the key runs. With `noop` and no op of the
+   * key running or sent, a value that leaves the server as it stood (`noop`
+   * of the first waiting op's merged params, whose base is the server's
+   * before any of them) cancels the waiting ops and queues nothing: null.
+   * An op whose send may have reached the server (params.sentAt, stamped
+   * by runMessageAction) counts as running there: it is kept with the new
+   * value, a resend being idempotent. With `sentRuns` (an edit, made
+   * against a body its own first send may have replaced) it keeps its
+   * value instead and the new one waits behind it, as behind a running
+   * op. An edit refused because the message
+   * changed (isRefusedEdit) is not replaced: its notice keeps the refused
+   * text. Runs under exclusive(), with the id the create settled on when it
+   * did.
+   */
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts?: QueueActionOpts & { noop?: undefined },
+  ): Promise<OutboxOp>;
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts: QueueActionOpts,
+  ): Promise<OutboxOp | null>;
+  private queueAction(
+    configId: string,
+    kind: string,
+    channelId: number | null,
+    params: Record<string, any>,
+    opts: QueueActionOpts = {},
+  ): Promise<OutboxOp | null> {
+    return this.exclusive(configId, async () => {
+      const id = channelId === null ? null : ((await this.realIdOf(configId, channelId)) ?? channelId);
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const same = all.filter((o) => o.kind === kind && (id === null || o.params.channelId === id) && (opts.same?.(o) ?? true));
+      // A refused edit's notice holds its text for « Reprendre »: a new edit of the message leaves it
+      for (const o of same) if (o.status === "blocked" && !isRefusedEdit(o)) await this.outbox.cancel(o.id);
+      const values = { ...(id === null ? {} : { channelId: id }), ...params };
+      // In dependency order: the first waits for none of the others, a follow-up comes after the op it waits for
+      const queued = dependencyOrder(same).filter((o) => o.status !== "running" && o.status !== "blocked");
+      // With sentRuns, the newest op that may have reached the server holds its values: only those after it take the new ones
+      let held = -1;
+      if (opts.sentRuns) for (let i = queued.length - 1; i >= 0 && held < 0; i--) if (queued[i].params.sentAt) held = i;
+      const waiting = queued.slice(held + 1);
+      const running = same.find((o) => o.status === "running") ?? queued[held];
+      const sent = waiting.some((o) => !!o.params.sentAt);
+      let op: OutboxOp | null;
+      if (waiting.length > 0) {
+        for (const w of waiting) await this.outbox.setParams(w.id, opts.merge ? opts.merge(w.params) : params);
+        // The newest may have started, finished or been given up between the lookup and the write
+        const now = await this.db.getOutboxOp(waiting[waiting.length - 1].id);
+        if (now && now.status !== "running" && now.status !== "blocked") {
+          const first = waiting.length > 1 ? await this.db.getOutboxOp(waiting[0].id) : now;
+          const noop = !running && !sent && !!first && !!opts.noop?.(first.params);
+          op = noop ? await this.cancelWaiting(waiting, first!.params) : now;
+        } else {
+          op = await this.outbox.enqueue({ noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: now?.id ?? null });
+        }
+      } else if (!running && opts.noop?.(values)) {
+        op = null;
+      } else {
+        const createOpId = id === null ? null : ((await this.repo.channel(configId, id))?.createOpId ?? null);
+        const creating = createOpId !== null && all.some((o) => o.id === createOpId) ? createOpId : null;
+        op = await this.outbox.enqueue({
+          noteId: CHAT_NOTE, configId, kind, params: values, dependsOn: running?.id ?? opts.after ?? creating,
+        });
+      }
+      await opts.local?.(id, op);
+      return op;
+    });
+  }
+
+  /**
+   * Cancels the waiting ops of a key whose value leaves the server as it
+   * stood. One that started meanwhile, or whose send may have reached the
+   * server (params.sentAt), holds the merged value or an older one: it is
+   * kept, a follow-up with `merged` goes behind it, so the server still
+   * ends where it stood, and is returned; otherwise null.
+   */
+  private async cancelWaiting(waiting: OutboxOp[], merged: Record<string, any>): Promise<OutboxOp | null> {
+    let started: OutboxOp | null = null;
+    for (const w of waiting) {
+      const now = await this.db.getOutboxOp(w.id);
+      if (!now) continue;
+      if (now.status === "running" || now.params.sentAt) started = now;
+      else await this.outbox.cancel(w.id);
+    }
+    if (!started) return null;
+    const { blockedReason: _reason, candidates: _candidates, ...params } = merged;
+    return this.outbox.enqueue({ noteId: CHAT_NOTE, configId: started.configId, kind: started.kind, params, dependsOn: started.id });
+  }
+
+  /** The cached conversation an action names, refused (Error) unless the user is a member of it. */
+  private async memberChannel(configId: string, channelId: number) {
+    const id = (await this.realIdOf(configId, channelId)) ?? channelId;
+    const channel = await this.repo.channel(configId, id);
+    if (!channel || !channel.isMember || channel.createFailed || (await this.leaving(configId, id))) {
+      throw new Error(`Conversation ${channelId} is not one the user is a member of.`);
+    }
+    return channel;
+  }
+
+  /** Invites people into a group or channel; the people of the op waiting are kept (union). A chat refuses: it takes a new group. */
+  async queueInvite(configId: string, channelId: number, partnerIds: number[]): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    if (channel.channelType === "chat") throw new Error("A direct message takes no member: invite into a new group.");
+    const ids = [...new Set(partnerIds)];
+    return this.queueAction(configId, CHAT_INVITE, channelId, { partnerIds: ids }, {
+      merge: (stored) => ({ partnerIds: [...new Set([...(stored.partnerIds ?? []), ...ids])] }),
+    });
+  }
+
+  /**
+   * Renames a conversation, shown at once: a group or channel's name (a
+   * channel never to "", a group to "" shows its members' names again), a
+   * chat's own label (customChannelName; "" shows the correspondent again).
+   */
+  async queueRename(configId: string, channelId: number, name: string): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    const trimmed = name.trim();
+    if (channel.channelType === "channel" && !trimmed) throw new Error("A channel needs a name.");
+    return this.queueAction(configId, CHAT_RENAME, channelId, { name: trimmed }, {
+      local: (id) => this.repo.patchChannel(configId, id!, channel.channelType === "chat"
+        ? { customChannelName: trimmed || null }
+        : { name: trimmed }),
+    });
+  }
+
+  /** Changes the description of a group or channel, shown at once. */
+  async queueDescribe(configId: string, channelId: number, description: string): Promise<OutboxOp> {
+    await this.memberChannel(configId, channelId);
+    return this.queueAction(configId, CHAT_DESCRIBE, channelId, { description }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { description }),
+    });
+  }
+
+  /** Hides a direct message (unpinned on the server), at once on the phone; its next message shows it again. */
+  async queueHide(configId: string, channelId: number): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_HIDE, channelId, {}, {
+      local: (id) => this.repo.patchChannel(configId, id!, { isPinned: false }),
+    });
+  }
+
+  /**
+   * Mutes a conversation until `until` (an ISO date, "forever"; null
+   * unmutes), shown at once. The minutes leave with the request
+   * (muteMinutes), so a mute that waited past its end unmutes.
+   */
+  async queueMute(configId: string, channelId: number, until: string | null): Promise<OutboxOp> {
+    await this.memberChannel(configId, channelId);
+    return this.queueAction(configId, CHAT_MUTE, channelId, { until }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { muteUntilDt: muteDt(until) }),
+    });
+  }
+
+  /**
+   * Mutes the whole account until `until`, as queueMute; applied at once
+   * and stamped (globalMuteAt), so a load that began before it does not
+   * write the older value over it.
+   */
+  async queueGlobalMute(configId: string, until: string | null): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_GLOBAL_MUTE, null, { until }, {
+      local: () => this.repo.setSourceState({ configId, globalMuteUntil: muteDt(until), globalMuteAt: this.now().toISOString() }),
+    });
+  }
+
+  /**
+   * Sets Odoo's notification setting of a channel (null: the general one
+   * applies), shown at once; the op waiting takes the new value. A chat or
+   * a group refuses (Error): Odoo ignores the setting there.
+   */
+  async queueNotify(configId: string, channelId: number, value: OdooNotify | null): Promise<OutboxOp> {
+    const channel = await this.memberChannel(configId, channelId);
+    if (channel.channelType !== "channel") throw new Error("Only a channel takes Odoo's notification setting: mute a chat or a group.");
+    return this.queueAction(configId, CHAT_NOTIFY, channelId, { value }, {
+      local: (id) => this.repo.patchChannel(configId, id!, { customNotifications: value }),
+    });
+  }
+
+  /**
+   * Sets Odoo's general setting for the account's channels, as
+   * queueGlobalMute: applied at once and stamped (channelNotificationsAt),
+   * so a load that began before it does not write the older value over it.
+   */
+  async queueGlobalNotify(configId: string, value: OdooNotify): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_GLOBAL_NOTIFY, null, { value }, {
+      local: () => this.repo.setSourceState({ configId, channelNotifications: value, channelNotificationsAt: this.now().toISOString() }),
+    });
+  }
+
+  /** Removes another person from a group or channel (one op per person); the caller checks the right. */
+  async queueRemove(configId: string, channelId: number, partnerId: number): Promise<OutboxOp> {
+    return this.queueAction(configId, CHAT_REMOVE, channelId, { partnerId }, {
+      same: (o) => o.params.partnerId === partnerId,
+    });
+  }
+
+  /**
+   * Queues the user's own reaction `content` on a message, on or off, as
+   * the target state of (message, content) (queueAction): the op waiting
+   * takes the new action and keeps its base, and a value equal to its base
+   * (where the server stood) cancels the waiting ops and queues nothing
+   * (null). Shown at once (showReaction). The message is taken as the
+   * cache holds it (messageOf): one not sent yet is named by its post's
+   * client uuid and its op waits for that post. Rejects for a message not
+   * cached, or one whose post failed.
+   */
+  async queueReaction(
+    configId: string,
+    channelId: number,
+    target: MessageTarget,
+    content: string,
+    on: boolean,
+  ): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message of the reaction is not cached.");
+    if (message.status === "failed") throw new Error("A message not sent takes no reaction.");
+    const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
+    const action = on ? "add" : "remove";
+    const key = messageKeyOf(message);
+    const group = (await this.repo.reactionsOf(configId, message.channelId, [key])).get(key)?.find((g) => g.content === content);
+    return this.queueAction(configId, CHAT_REACTION, channelId, { ...named, content, action, base: !!group?.selfReacted }, {
+      same: (o) => o.params.content === content && sameTarget(targetOf(o), named),
+      merge: (stored) => ({ action, messageId: stored.messageId ?? named.messageId }),
+      after: message.messageId === null ? message.outboxOpId : null,
+      noop: (merged) => (merged.action === "add") === !!merged.base,
+      local: () => this.showReaction(configId, named, content, on),
+    });
+  }
+
+  /**
+   * Shows the user's own reaction in or out of the cached group of a
+   * message (ownReaction); a new group goes after the message's others.
+   * The message is read again: a settle may have moved its key.
+   */
+  private async showReaction(configId: string, target: MessageTarget, content: string, on: boolean): Promise<void> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) return;
+    const key = messageKeyOf(message);
+    const groups = (await this.repo.reactionsOf(configId, message.channelId, [key])).get(key) ?? [];
+    const stored = groups.find((g) => g.content === content);
+    const empty: ChatReaction = {
+      configId,
+      channelId: message.channelId,
+      messageKey: key,
+      messageId: message.messageId,
+      content,
+      count: 0,
+      selfReacted: false,
+      partnerIds: [],
+      guestCount: 0,
+      sequence: Math.max(0, ...groups.map((g) => g.sequence)) + 1,
+    };
+    const next = ownReaction(stored ?? empty, on, (await this.repo.sourceState(configId)).selfPartnerId);
+    if (next) await this.repo.putReaction(next);
+    else if (stored) await this.repo.dropReaction(configId, key, content);
+  }
+
+  /**
+   * Queues a sent message pinned in its channel (`pinned`) or not, as the
+   * target state of the message (queueAction): the op waiting takes the
+   * new value and keeps its base, and a value equal to its base (where the
+   * server stood) cancels the waiting ops and queues nothing (null).
+   * Shown at once: pinnedAt now, or null. Rejects for a message not cached
+   * or without a server id (Odoo pins only a message it holds).
+   */
+  async queuePin(configId: string, channelId: number, target: MessageTarget, pinned: boolean): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message to pin is not cached.");
+    if (message.messageId === null) throw new Error("A message not sent yet takes no pin.");
+    const messageId = message.messageId;
+    const base = { base: !!message.pinnedAt, baseAt: message.pinnedAt ?? null };
+    return this.queueAction(configId, CHAT_PIN, channelId, { messageId, clientUuid: null, pinned, ...base }, {
+      same: (o) => o.params.messageId === messageId,
+      merge: () => ({ pinned }),
+      noop: (merged) => !!merged.pinned === !!merged.base,
+      local: () => this.showPin(configId, messageId, pinned ? odooDate(this.now()) : null),
+    });
+  }
+
+  /** Shows a cached message pinned at `at` (Odoo's date string), or not pinned (null). */
+  private async showPin(configId: string, messageId: number, at: string | null): Promise<void> {
+    if (!(await this.repo.message(configId, messageId))) return;
+    await this.repo.applyDelta(configId, { ...emptyDelta(), messages: [{ messageId, pinnedAt: at }] });
+  }
+
+  /**
+   * Queues a message starred (`starred`) or not, as the target state of
+   * the message for the account (queueAction with no conversation, keyed
+   * by the message id): the op waiting takes the new value and keeps its
+   * base, the flag cached when the first op was queued (the mailbox row's,
+   * else the chat message's); a value equal to its base cancels the
+   * waiting ops and queues nothing (null). Shown at once (showStar).
+   * `channelId` names the conversation of a channel message for the
+   * screens; null for a record's message. Rejects for a message cached in
+   * neither table.
+   */
+  async queueStar(configId: string, messageId: number, starred: boolean, channelId: number | null): Promise<OutboxOp | null> {
+    const base = await this.starredOf(configId, messageId);
+    if (base === null) throw new Error("The message to star is not cached.");
+    return this.queueAction(configId, CHAT_STAR, null, { messageId, starred, base, channelId }, {
+      same: (o) => o.params.messageId === messageId,
+      merge: () => ({ starred }),
+      noop: (merged) => !!merged.starred === !!merged.base,
+      local: () => this.showStar(configId, messageId, starred),
+    });
+  }
+
+  /** The starred flag the phone shows for a message: its mailbox row's, else its chat message's; null when neither is cached. */
+  async starredOf(configId: string, messageId: number): Promise<boolean | null> {
+    const item = await this.repo.mailboxItem(configId, messageId);
+    if (item) return item.starred;
+    const message = await this.repo.message(configId, messageId);
+    return message ? !!message.starred : null;
+  }
+
+  /**
+   * Shows a cached message starred or not (ChatRepository.setStarred); a
+   * change of the flag shown moves the account's starredCounter by one.
+   */
+  private async showStar(configId: string, messageId: number, on: boolean): Promise<void> {
+    const shown = await this.starredOf(configId, messageId);
+    if (shown === null) return;
+    await this.repo.setStarred(configId, messageId, on);
+    if (shown === on) return;
+    const { starredCounter } = await this.repo.sourceState(configId);
+    await this.repo.setSourceState({ configId, starredCounter: Math.max(0, starredCounter + (on ? 1 : -1)) });
+  }
+
+  /**
+   * Queues inbox items marked read (CHAT_INBOX_DONE), the ids added to the
+   * op waiting (union). Shown at once (showDone): the rows still in the
+   * inbox move to the history, and the ids moved join the op's cleared.
+   * Resolves with the op as stored after that.
+   */
+  async queueInboxDone(configId: string, messageIds: number[]): Promise<OutboxOp> {
+    const ids = [...new Set(messageIds)].sort((a, b) => a - b);
+    const wanted = new Set(ids);
+    const op = await this.queueAction(configId, CHAT_INBOX_DONE, null, { messageIds: ids, cleared: [] }, {
+      merge: (stored) => ({ messageIds: [...new Set([...(stored.messageIds ?? []), ...ids])].sort((a, b) => a - b) }),
+      local: (_id, queued) => this.showDone(configId, queued, (item) => wanted.has(item.messageId)),
+    });
+    return (await this.db.getOutboxOp(op.id)) ?? op;
+  }
+
+  /**
+   * Queues « Tout marquer comme lu » up to `maxId` (CHAT_INBOX_ALL), the
+   * larger bound kept. Shown at once (showDone) for the rows in the inbox
+   * at or below the bound. Resolves with the op as stored after that.
+   */
+  async queueInboxAll(configId: string, maxId: number): Promise<OutboxOp> {
+    const op = await this.queueAction(configId, CHAT_INBOX_ALL, null, { maxId, cleared: [] }, {
+      merge: (stored) => ({ maxId: Math.max(stored.maxId ?? 0, maxId) }),
+      local: (_id, queued) => this.showDone(configId, queued, (item) => item.messageId <= maxId),
+    });
+    return (await this.db.getOutboxOp(op.id)) ?? op;
+  }
+
+  /**
+   * Moves the account's inbox rows that `match` takes to the history
+   * (needaction off, history on), inboxCounter one lower per row moved and
+   * a cached channel's needactionCounter one lower per mention of it moved;
+   * the ids moved join the cleared of `op`, which the overlay of a server
+   * count then takes off (overlayInbox). Runs in queueAction's exclusive().
+   */
+  private async showDone(configId: string, op: OutboxOp | null, match: (item: ChatMailboxItem) => boolean): Promise<void> {
+    const moved = (await this.repo.mailboxItems(configId, "inbox")).filter(match);
+    if (moved.length === 0) return;
+    const perChannel = new Map<number, number>();
+    for (const item of moved) {
+      await this.repo.patchMailbox(configId, item.messageId, { needaction: false, history: true });
+      if (item.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+    }
+    for (const [channelId, n] of perChannel) {
+      const channel = await this.repo.channel(configId, channelId);
+      if (channel) await this.repo.patchChannel(configId, channelId, { needactionCounter: Math.max(0, channel.needactionCounter - n) });
+    }
+    const { inboxCounter } = await this.repo.sourceState(configId);
+    await this.repo.setSourceState({ configId, inboxCounter: Math.max(0, inboxCounter - moved.length) });
+    if (op) {
+      const stored = (await this.db.getOutboxOp(op.id))?.params.cleared ?? [];
+      await this.outbox.setParams(op.id, { cleared: [...new Set([...stored, ...moved.map((i) => i.messageId)])].sort((a, b) => a - b) });
+    }
+  }
+
+  /**
+   * The inbox ops of the account not given up (CHAT_INBOX_DONE,
+   * CHAT_INBOX_ALL), the op `except` names left out, and whether one of
+   * them covers a message id: listed by a done, or at or below the bound
+   * of a mark all.
+   */
+  async inboxWaiting(configId: string, except?: string): Promise<{ ops: OutboxOp[]; covers: (messageId: number) => boolean }> {
+    const ops = (await this.db.getOutboxOpsForConfig(configId))
+      .filter((o) => INBOX_KINDS.includes(o.kind) && o.status !== "blocked" && o.id !== except);
+    const ids = new Set<number>(ops.filter((o) => o.kind === CHAT_INBOX_DONE).flatMap((o) => o.params.messageIds ?? []));
+    const maxId = Math.max(0, ...ops.filter((o) => o.kind === CHAT_INBOX_ALL).map((o) => o.params.maxId ?? 0));
+    return { ops, covers: (id) => ids.has(id) || id <= maxId };
+  }
+
+  /**
+   * Takes the ids `done` names out of the cleared of the waiting inbox
+   * ops: the server holds them read already (its bus said so, or a page
+   * proved it), so its count no longer holds them and the overlay must
+   * not take them off again.
+   */
+  async forgetCleared(configId: string, done: (messageId: number) => boolean): Promise<void> {
+    for (const op of (await this.inboxWaiting(configId)).ops) {
+      const cleared: number[] = op.params.cleared ?? [];
+      const kept = cleared.filter((id) => !done(id));
+      if (kept.length !== cleared.length) await this.outbox.setParams(op.id, { cleared: kept });
+    }
+  }
+
+  /**
+   * Queues an edit of the user's own message to `text` with the people
+   * and channels picked (`mentions`). A message not sent yet whose post has
+   * not started (postStarted) takes the text into its post instead, its
+   * bubble rebuilt, and nothing more is queued (null); the edits waiting
+   * for that post go. Otherwise a text equal to the shown one (bodyText,
+   * the browser's own check) queues nothing (null), and one edit waits per
+   * message (queueAction): the last text wins, the first op's baseBody is
+   * kept (baseBodyOf: a follow-up behind a running edit takes that op's),
+   * and an edit of a message whose post still runs waits for it. An edit
+   * that may have reached the server (sentAt: its answer lost) keeps its
+   * text: the new one follows it, its base moved to the server's answer
+   * once the replay is done (rebaseEdits). Waiting
+   * edits that end on the base's text (noop: none running or sent) are
+   * cancelled and the base shows again. Otherwise shown at once with the
+   * edited span the server adds. Rejects for a message not cached,
+   * failed, or being deleted.
+   */
+  async queueEdit(
+    configId: string,
+    channelId: number,
+    target: MessageTarget,
+    text: string,
+    mentions: Mentions,
+  ): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message to edit is not cached.");
+    if (message.status === "failed") throw new Error("A message not sent takes no edit.");
+    const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
+    const mine = (await this.db.getOutboxOpsForConfig(configId))
+      .filter((o) => o.status !== "blocked" && sameTarget(targetOf(o), named));
+    if (mine.some((o) => o.kind === CHAT_DELETE)) throw new Error("A message being deleted takes no edit.");
+    const body = composeBody(text, mentions, await emojiConversions()).body;
+    if (message.messageId === null && (await this.foldIntoPost(message, text, mentions, body, mine))) return null;
+    if (bodyText(message.body) === text) return null;
+    const baseBody = baseBodyOf(message, mine);
+    return this.queueAction(configId, CHAT_EDIT, channelId, { ...named, text, mentions, baseBody }, {
+      same: (o) => sameTarget(targetOf(o), named),
+      merge: (stored) => ({ text, mentions, messageId: stored.messageId ?? named.messageId }),
+      after: message.messageId === null ? message.outboxOpId : null,
+      noop: (merged) => typeof merged.baseBody === "string" && bodyText(merged.baseBody) === merged.text,
+      sentRuns: true,
+      local: async () => {
+        // Nothing left to send (a text back to the base): the base shows again
+        const left = (await this.db.getOutboxOpsForConfig(configId))
+          .some((o) => o.kind === CHAT_EDIT && o.status !== "blocked" && sameTarget(targetOf(o), named));
+        if (left) await this.showBody(configId, named, withEditedMark(body));
+        else if (typeof baseBody === "string") await this.showBody(configId, named, baseBody);
+      },
+    });
+  }
+
+  /**
+   * Writes an edit into the post of a message not sent yet, when that post
+   * has not started: its text and mentions, the pending bubble's body, and
+   * the edits waiting for it cancelled. Returns false, writing nothing
+   * more, when the post is gone or started, also when it starts during the
+   * write: an edit then follows it.
+   */
+  private async foldIntoPost(
+    message: ChatMessage,
+    text: string,
+    mentions: Mentions,
+    body: string,
+    mine: OutboxOp[],
+  ): Promise<boolean> {
+    const post = message.outboxOpId ? await this.db.getOutboxOp(message.outboxOpId) : null;
+    if (!post || postStarted(post)) return false;
+    await this.outbox.setParams(post.id, { text, mentions });
+    const now = await this.db.getOutboxOp(post.id);
+    if (!now || postStarted(now)) return false;
+    for (const o of mine) if (o.kind === CHAT_EDIT && o.status !== "running") await this.outbox.cancel(o.id);
+    await this.repo.putPending({ ...message, body });
+    return true;
+  }
+
+  /**
+   * Queues the delete of the user's own message: its body emptied as
+   * Odoo's delete does, shown at once (body ""). A message not sent yet
+   * whose post has not started never reaches the server: its post, its
+   * uploads and every action on it are cancelled, its row and its files
+   * go (dropPendingMessage), and null is returned. Otherwise the edits,
+   * reactions, pins and stars of the message still waiting are cancelled,
+   * and one delete waits for what still runs on it (an edit, a reaction, a
+   * pin, a star, its post). A star cancelled shows the server's flag again
+   * (its base), the counter following, unless one of its ops runs or may
+   * have reached the server (sentAt); an accepted delete clears it on the
+   * server, which sends the starred box without it (_cleanup_side_records).
+   * A reaction or a pin cancelled with none of its key left running
+   * shows again as the server held it (base; a pin at baseAt), so a refused
+   * delete leaves the message as the server has it; an accepted one comes
+   * back with pinned_at cleared, as Odoo unpins an emptied message. Unless
+   * one of its ops may have reached the server (sentAt): base is then no
+   * longer where the server stands, and it keeps its shown state. An edit
+   * cancelled after a send that may have reached the server (sentAt)
+   * marks the delete editSent: its baseBody may be older than the server's
+   * body. A second delete returns the first. Rejects for a message not
+   * cached.
+   */
+  async queueDelete(configId: string, channelId: number, target: MessageTarget): Promise<OutboxOp | null> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) throw new Error("The message to delete is not cached.");
+    return this.exclusive(configId, async () => {
+      const id = (await this.realIdOf(configId, channelId)) ?? channelId;
+      const named: MessageTarget = { messageId: message.messageId, clientUuid: message.clientUuid };
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const post = message.messageId === null && message.outboxOpId ? all.find((o) => o.id === message.outboxOpId) ?? null : null;
+      if (message.messageId === null && (!post || !postStarted(post))) {
+        await this.dropPendingMessage(configId, message, all);
+        return null;
+      }
+      const mine = all.filter((o) => MESSAGE_KINDS.includes(o.kind) && o.status !== "blocked"
+        && sameTarget(targetOf(o), named));
+      const queued = mine.find((o) => o.kind === CHAT_DELETE);
+      if (queued) return queued;
+      const stars = dependencyOrder(all.filter((o) => o.kind === CHAT_STAR && o.status !== "blocked"
+        && message.messageId !== null && o.params.messageId === message.messageId));
+      const baseBody = baseBodyOf(message, mine);
+      const running = mine.find((o) => o.status === "running") ?? stars.find((o) => o.status === "running");
+      const cancelled = dependencyOrder(mine.filter((o) => o.status !== "running"));
+      for (const o of [...cancelled, ...stars.filter((o) => o.status !== "running")]) await this.outbox.cancel(o.id);
+      const editSent = cancelled.some((o) => o.kind === CHAT_EDIT && !!o.params.sentAt);
+      const op = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_DELETE,
+        params: { channelId: id, ...named, baseBody, ...(editSent ? { editSent } : {}) },
+        dependsOn: running?.id ?? post?.id ?? null,
+      });
+      await this.showBody(configId, named, "");
+      // A star cancelled shows the server's flag again (base), as Odoo's delete clears the stars of what it empties
+      if (stars.length > 0 && stars.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        await this.showStar(configId, message.messageId!, !!stars[0].params.base);
+      }
+      // The first cancelled op of a reaction's or a pin's key holds the server's state before any of them (base)
+      const shown = new Set<string>();
+      for (const o of cancelled) {
+        const key = targetKey(o);
+        if (o.kind !== CHAT_REACTION && o.kind !== CHAT_PIN) continue;
+        if (shown.has(key) || mine.some((r) => r.status === "running" && targetKey(r) === key)) continue;
+        shown.add(key);
+        if (cancelled.some((r) => targetKey(r) === key && r.params.sentAt)) continue;
+        if (o.kind === CHAT_REACTION) await this.showReaction(configId, named, o.params.content, !!o.params.base);
+        else if (message.messageId !== null) await this.showPin(configId, message.messageId, o.params.base ? o.params.baseAt ?? null : null);
+      }
+      return op;
+    });
+  }
+
+  /**
+   * Forgets a message that never reached the server, as a leave forgets
+   * the posts of its conversation: its post, the uploads and refused-file
+   * notices of its files, and every action on it (any state) leave the
+   * outbox, an upload on the wire is stopped, and the row, its reactions,
+   * its file rows and their files go. The actions go first, the uploads
+   * next and the post last: cut off midway, what is left is a pending
+   * message whose post still runs, never an action or an upload without
+   * its post.
+   */
+  private async dropPendingMessage(configId: string, message: ChatMessage, all: OutboxOp[]): Promise<void> {
+    const uuid = message.clientUuid!;
+    const files = new Set((await this.repo.outgoingOf(configId, uuid)).map((r) => r.localUuid).filter((u): u is string => !!u));
+    const mine = all.filter((o) => o.noteId === CHAT_NOTE && (
+      o.id === message.outboxOpId
+      || ((o.kind === CHAT_UPLOAD || o.kind === CHAT_FILE_REFUSED) && files.has(o.params.localUuid))
+      || (MESSAGE_KINDS.includes(o.kind) && o.params.clientUuid === uuid)));
+    this.stopUploads(mine);
+    const rank = (o: OutboxOp) => (o.id === message.outboxOpId ? 2 : MESSAGE_KINDS.includes(o.kind) ? 0 : 1);
+    for (const o of [...mine].sort((a, b) => rank(a) - rank(b))) await this.outbox.cancel(o.id);
+    await this.repo.dropQueued(configId, uuid);
+    await this.dropOutgoing(configId, [...files]);
+  }
+
+  /** Shows a body on the cached message a target names: the pending row, or the server's row through a delta. */
+  private async showBody(configId: string, target: MessageTarget, body: string): Promise<void> {
+    const message = await this.repo.messageOf(configId, target);
+    if (!message) return;
+    if (message.messageId === null) await this.repo.putPending({ ...message, body });
+    else {
+      await this.repo.applyDelta(configId, {
+        ...emptyDelta(), messages: [{ messageId: message.messageId, channelId: message.channelId, body }],
+      });
+    }
+  }
+
+  /** The body a queued edit shows until the server answers: the browser's HTML with the edited span. */
+  private async editedBody(params: Record<string, any>): Promise<string> {
+    return withEditedMark(composeBody(params.text ?? "", params.mentions ?? EMPTY_MENTIONS, await emojiConversions()).body);
+  }
+
+  /**
+   * The refused edit a notice holds (« Reprendre »): returned once, its
+   * notice dismissed; null for any other notice or one already taken.
+   */
+  async takeRefusedEdit(configId: string, noticeId: string): Promise<ChatNotice["edit"] | null> {
+    const notice = (await this.notices([configId])).find((n) => n.id === noticeId);
+    if (!notice?.edit) return null;
+    await this.dismissNotice(configId, noticeId);
+    return notice.edit;
+  }
+
+  /**
+   * Leaves a conversation. On the phone at once: it is no longer a member,
+   * so the list stops showing it; every other chat row of it waiting in the
+   * outbox (posts, reads, actions) is cancelled, and the texts of its posts
+   * turn failed. With failed texts it stays listed (leftUnsent) until the
+   * user dismisses it (discardCreate). A row already running is left to
+   * finish and the leave waits for it; a post that fails then, or is
+   * retried, is not sent again (sendPost). A conversation whose create or
+   * join never reached the server (createReached) is not left but given
+   * up: that op goes with the rest, and no leave is queued unless it is a
+   * direct message pinned again, which exists on the server. One that may
+   * have reached it keeps its create or join, and the leave waits for it;
+   * the swap keeps the conversation left (settleCreate). The files of its
+   * posts are refused ("left"); an upload on the wire is cancelled and the
+   * leave waits for it to stop. A second leave returns the first; returns
+   * null when nothing has to reach the server.
+   */
+  queueLeave(configId: string, channelId: number): Promise<OutboxOp | null> {
+    return this.exclusive(configId, async () => {
+      const id = (await this.realIdOf(configId, channelId)) ?? channelId;
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const queued = all.find((o) => o.kind === CHAT_LEAVE && o.params.channelId === id && o.status !== "blocked");
+      if (queued) return queued;
+      const channel = await this.repo.channel(configId, id);
+      const create = channel?.createOpId ? all.find((o) => o.id === channel.createOpId) ?? null : null;
+      const keepCreate = create !== null && createReached(create);
+      const mine = all.filter((o) => o.noteId === CHAT_NOTE && o.params.channelId === id && !(keepCreate && o.id === create!.id));
+      const running = mine.find((o) => o.status === "running");
+      for (const o of mine) {
+        if (o.status === "running") continue;
+        await this.outbox.cancel(o.id);
+        if (o.kind === CHAT_POST) {
+          await this.repo.failQueued(configId, o.clientUuid);
+          await this.refuseFilesOf(configId, o.clientUuid, "left");
+        }
+        if (o.kind === CHAT_UPLOAD) await this.repo.setRefused(configId, o.params.localUuid, "left");
+      }
+      this.stopUploads(mine);
+      // Exists on the server: a known conversation, one whose create or join may have run, a direct message pinned again
+      const onServer = keepCreate || (create === null ? id > 0 : create.kind === CHAT_CREATE && id >= 0);
+      const op = onServer
+        ? await this.outbox.enqueue({
+          noteId: CHAT_NOTE,
+          configId,
+          kind: CHAT_LEAVE,
+          params: { channelId: id },
+          dependsOn: running?.id ?? (keepCreate ? create!.id : null),
+        })
+        : null;
+      const unsent = (await this.repo.messages(configId, id)).some((m) => m.messageId === null && m.status === "failed");
+      if (!onServer && !unsent) {
+        // Never on the server and nothing typed into it: nothing left to keep
+        await this.repo.dropChannel(configId, id);
+        return null;
+      }
+      await this.repo.patchChannel(configId, id, {
+        isMember: false,
+        localPinned: false,
+        leftUnsent: unsent,
+        ...(create !== null && !keepCreate ? { createOpId: null } : {}),
+      });
+      return op;
+    });
+  }
+
+  /**
+   * Lays the target states still queued (not given up) over a delta a load
+   * read, so the server's older values do not undo what the phone shows
+   * until the action is sent: a name or label, a description, a mute, a
+   * hidden direct message, a conversation left, a channel's notification
+   * setting, the account's mute and general channel setting. Only
+   * conversations the delta carries are touched. Then the reactions
+   * (overlayMessages).
+   */
+  async overlayPending(configId: string, delta: StoreDelta): Promise<void> {
+    await this.overlayMessages(configId, delta);
+    const byId = new Map(delta.channels.map((c) => [c.channelId, c]));
+    for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+      if (op.noteId !== CHAT_NOTE || op.status === "blocked") continue;
+      if (op.kind === CHAT_GLOBAL_MUTE) {
+        delta.globalMuteUntil = muteDt(op.params.until ?? null);
+        continue;
+      }
+      if (op.kind === CHAT_GLOBAL_NOTIFY) {
+        delta.channelNotifications = op.params.value;
+        continue;
+      }
+      const c = byId.get(op.params.channelId);
+      if (!c) continue;
+      const type = c.channelType ?? (await this.repo.channel(configId, c.channelId))?.channelType;
+      if (op.kind === CHAT_RENAME) {
+        if (type === "chat") c.customChannelName = op.params.name || null;
+        else c.name = op.params.name;
+      } else if (op.kind === CHAT_DESCRIBE) c.description = op.params.description;
+      else if (op.kind === CHAT_MUTE) c.muteUntilDt = muteDt(op.params.until ?? null);
+      else if (op.kind === CHAT_NOTIFY) c.customNotifications = op.params.value ?? null;
+      else if (op.kind === CHAT_HIDE) c.isPinned = false;
+      else if (op.kind === CHAT_LEAVE) c.isMember = false;
+    }
+  }
+
+  /**
+   * Lays the reactions still queued (not given up) over the reaction
+   * groups a delta carries (a load, a history page, the bus, an answer), so
+   * the server's older groups do not undo what the phone shows until they
+   * are sent. Per key the newest op counts: its group in the delta gains
+   * or loses the user (ownReaction), and the server's state the delta
+   * states for sure becomes the base of the key's ops when none was sent
+   * yet; a group the user is put into and the
+   * delta's full set (reactionSets) or deletion leaves out is added, after
+   * the message's others; one nobody is left in becomes a deletion. Only
+   * the messages whose reactions the delta carries are touched. The
+   * bodies first (overlayBodies; `except`: the op whose answer the delta
+   * is), then the pins (overlayPins), the stars (overlayStars) and the
+   * inbox (overlayInbox).
+   */
+  async overlayMessages(configId: string, delta: StoreDelta, except?: string): Promise<void> {
+    await this.overlayBodies(configId, delta, except);
+    await this.overlayPins(configId, delta);
+    await this.overlayStars(configId, delta);
+    await this.overlayInbox(configId, delta);
+    const carried = new Set([...(delta.reactions ?? []), ...(delta.reactionSets ?? []), ...(delta.deletedReactions ?? [])]
+      .map((r) => r.messageId));
+    if (carried.size === 0) return;
+    // Per key, in dependency order: a follow-up comes after the op it waits for
+    const byKey = new Map<string, OutboxOp[]>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind === CHAT_REACTION && op.status !== "blocked") byKey.set(targetKey(op), [...(byKey.get(targetKey(op)) ?? []), op]);
+    }
+    if (byKey.size === 0) return;
+    const self = delta.selfPartnerId ?? (await this.repo.sourceState(configId)).selfPartnerId;
+    const groups = (delta.reactions ??= []);
+    for (const ops of byKey.values()) {
+      const op = ops[ops.length - 1];
+      const { content } = op.params;
+      const messageId: number | null = op.params.messageId
+        ?? (op.params.clientUuid ? (await this.repo.messageByClientUuid(configId, op.params.clientUuid))?.messageId ?? null : null);
+      if (messageId === null || !carried.has(messageId)) continue;
+      const on = op.params.action === "add";
+      const set = delta.reactionSets?.find((r) => r.messageId === messageId);
+      const named = (r: { messageId: number; content: string }) => r.messageId === messageId && r.content === content;
+      const at = groups.findIndex(named);
+      // What the server holds of the user's reaction, when the delta says it for sure: the base of ops none of which
+      // was sent yet, so a later tap is compared with where the server stands now
+      const held = at >= 0 ? groups[at].selfReacted
+        : (set && !set.contents.includes(content)) || delta.deletedReactions?.some(named) ? false : null;
+      if (held !== null && ops.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        for (const o of ops) if (!!o.params.base !== held) await this.outbox.setParams(o.id, { base: held });
+      }
+      if (at < 0 && (!on || (!set && !delta.deletedReactions?.some(named)))) continue;
+      const next = ownReaction(at >= 0 ? groups[at] : {
+        messageId,
+        content,
+        count: 0,
+        selfReacted: false,
+        partnerIds: [],
+        guestCount: 0,
+        sequence: Math.max(0, ...groups.filter((g) => g.messageId === messageId).map((g) => g.sequence)) + 1,
+      }, on, self);
+      if (at >= 0) groups.splice(at, 1);
+      delta.deletedReactions = (delta.deletedReactions ?? []).filter((r) => !named(r));
+      if (next) {
+        groups.push(next);
+        if (set && !set.contents.includes(content)) set.contents.push(content);
+      } else {
+        delta.deletedReactions.push({ messageId, content });
+        if (set) set.contents = set.contents.filter((c) => c !== content);
+      }
+    }
+  }
+
+  /**
+   * Lays the pins still queued (not given up) over the pinned state a
+   * delta carries, a message's pinned_at or its channel's full pinned list
+   * (pinnedSets), so the server's older state does not undo what the
+   * phone shows until they are sent. Per message the newest op counts:
+   * pinned, the message stays in its channel's list and keeps the
+   * pinnedAt the phone shows unless the delta has one; unpinned, it leaves
+   * the list and pinnedAt is null. The server's state the delta states for
+   * sure becomes the base of the message's ops when none was sent yet.
+   */
+  private async overlayPins(configId: string, delta: StoreDelta): Promise<void> {
+    const sets = new Map((delta.pinnedSets ?? []).map((s) => [s.channelId, s]));
+    const carried = new Map(delta.messages.filter((m) => m.pinnedAt !== undefined).map((m) => [m.messageId, m]));
+    if (sets.size === 0 && carried.size === 0) return;
+    const byMessage = new Map<number, OutboxOp[]>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind !== CHAT_PIN || op.status === "blocked" || typeof op.params.messageId !== "number") continue;
+      byMessage.set(op.params.messageId, [...(byMessage.get(op.params.messageId) ?? []), op]);
+    }
+    for (const [messageId, ops] of byMessage) {
+      const m = carried.get(messageId);
+      const set = sets.get(ops[0].params.channelId);
+      if (!m && !set) continue;
+      // What the server holds, when the delta says it: the base of ops none of which was sent yet
+      const at = m ? m.pinnedAt ?? null : set!.messageIds.includes(messageId) ? undefined : null;
+      if (ops.every((o) => o.status !== "running" && !o.params.sentAt)) {
+        const held = at === undefined ? true : at !== null;
+        for (const o of ops) {
+          const baseAt = at === undefined ? (o.params.baseAt ?? null) : at;
+          if (!!o.params.base !== held || (o.params.baseAt ?? null) !== baseAt) await this.outbox.setParams(o.id, { base: held, baseAt });
+        }
+      }
+      const on = !!ops[ops.length - 1].params.pinned;
+      if (m) {
+        if (!on) m.pinnedAt = null;
+        else if (!m.pinnedAt) delete m.pinnedAt;
+      }
+      if (set) {
+        const others = set.messageIds.filter((id) => id !== messageId);
+        set.messageIds = on ? [...others, messageId] : others;
+      }
+    }
+  }
+
+  /**
+   * Lays the stars still queued (not given up) over the starred flags a
+   * delta carries (its messages and mailbox partials) and over its
+   * starredCounter, so the server's older state does not undo what the
+   * phone shows until they are sent. Per message the newest op counts:
+   * the delta's flag becomes its target. While none of a message's ops was
+   * sent (none running, no sentAt), the delta's flag is the server's state
+   * for sure and becomes their base, and the counter, the server's count,
+   * gains the op's change from that base (±1). An op that may have reached
+   * the server leaves the counter as the server counts.
+   */
+  private async overlayStars(configId: string, delta: StoreDelta): Promise<void> {
+    const carried = [...delta.messages, ...(delta.mailbox ?? [])].filter((m) => m.starred !== undefined);
+    const counted = delta.starredCounter != null;
+    if (carried.length === 0 && !counted) return;
+    const byMessage = new Map<number, OutboxOp[]>();
+    for (const op of dependencyOrder(await this.db.getOutboxOpsForConfig(configId))) {
+      if (op.kind !== CHAT_STAR || op.status === "blocked" || typeof op.params.messageId !== "number") continue;
+      byMessage.set(op.params.messageId, [...(byMessage.get(op.params.messageId) ?? []), op]);
+    }
+    let change = 0;
+    for (const [messageId, ops] of byMessage) {
+      const items = carried.filter((m) => m.messageId === messageId);
+      const unsent = ops.every((o) => o.status !== "running" && !o.params.sentAt);
+      let base = !!ops[0].params.base;
+      if (items.length > 0 && unsent) {
+        base = !!items[0].starred;
+        for (const o of ops) if (!!o.params.base !== base) await this.outbox.setParams(o.id, { base });
+      }
+      const on = !!ops[ops.length - 1].params.starred;
+      for (const m of items) m.starred = on;
+      if (unsent && on !== base) change += on ? 1 : -1;
+    }
+    if (counted) delta.starredCounter = Math.max(0, delta.starredCounter! + change);
+  }
+
+  /**
+   * Lays the inbox ops still queued (not given up) over a delta: a mailbox
+   * partial in the inbox that one of them covers (inboxWaiting) shows in
+   * the history, whatever the server says until it is sent. While an op
+   * was not sent (not running, no sentAt), the server still counts the ids
+   * it cleared: the delta's inboxCounter loses one per id, and a channel
+   * whose needactionCounter it carries one per mention of it (its mailbox
+   * row's thread). An op that may have reached the server leaves the
+   * counts as the server gives them.
+   */
+  private async overlayInbox(configId: string, delta: StoreDelta): Promise<void> {
+    const { ops, covers } = await this.inboxWaiting(configId);
+    if (ops.length === 0) return;
+    for (const m of delta.mailbox ?? []) {
+      if (m.needaction && covers(m.messageId)) Object.assign(m, { needaction: false, history: true });
+    }
+    const cleared = [...new Set(ops.filter((o) => o.status !== "running" && !o.params.sentAt)
+      .flatMap((o): number[] => o.params.cleared ?? []))];
+    if (cleared.length === 0) return;
+    if (delta.inboxCounter !== null) delta.inboxCounter = Math.max(0, delta.inboxCounter - cleared.length);
+    const counted = delta.channels.filter((c) => c.needactionCounter !== undefined);
+    if (counted.length === 0) return;
+    const perChannel = new Map<number, number>();
+    for (const id of cleared) {
+      const item = await this.repo.mailboxItem(configId, id);
+      if (item?.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+    }
+    for (const c of counted) c.needactionCounter = Math.max(0, c.needactionCounter! - (perChannel.get(c.channelId) ?? 0));
+  }
+
+  /**
+   * Lays the edits and deletes still queued (not given up) over the bodies
+   * a delta carries, so the server's older body does not undo what the
+   * phone shows until they are sent: per message a queued delete shows "",
+   * else the newest edit its text (editedBody). An edit whose baseBody is
+   * still unknown (queued while its post ran) takes the delta's body as
+   * its base while that body is still the post's (postBody); a known base
+   * never moves, so a browser edit read meanwhile still refuses it.
+   * `except` is left out: the op whose own answer this is.
+   */
+  private async overlayBodies(configId: string, delta: StoreDelta, except?: string): Promise<void> {
+    const carried = new Map(delta.messages.filter((m) => m.body !== undefined).map((m) => [m.messageId, m]));
+    if (carried.size === 0) return;
+    const ops = dependencyOrder(await this.db.getOutboxOpsForConfig(configId))
+      .filter((o) => (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && o.id !== except);
+    const shown = new Map<number, OutboxOp>();
+    for (const op of ops) {
+      const messageId: number | null = op.params.messageId
+        ?? (op.params.clientUuid ? (await this.repo.messageByClientUuid(configId, op.params.clientUuid))?.messageId ?? null : null);
+      const m = messageId === null ? undefined : carried.get(messageId);
+      if (!m || shown.get(messageId!)?.kind === CHAT_DELETE) continue;
+      if (op.kind === CHAT_EDIT && op.params.baseBody == null && postBody(op, m.body!)) {
+        await this.outbox.setParams(op.id, { baseBody: m.body });
+      }
+      shown.set(messageId!, op);
+    }
+    for (const [messageId, op] of shown) {
+      carried.get(messageId)!.body = op.kind === CHAT_DELETE ? "" : await this.editedBody(op.params);
+    }
+  }
+
+  /** The actions of the given accounts the outbox gave up on, oldest first, until dismissed. */
+  async notices(configIds: string[]): Promise<ChatNotice[]> {
+    const out: ChatNotice[] = [];
+    for (const configId of configIds) {
+      for (const o of await this.db.getOutboxOpsForConfig(configId)) {
+        if (o.status !== "blocked" || !NOTICE_KINDS.includes(o.kind)) continue;
+        if (o.kind === CHAT_FILE_REFUSED) {
+          out.push({
+            id: o.id,
+            configId,
+            kind: o.kind,
+            channelId: o.params.channelId ?? null,
+            reason: "refused",
+            error: "",
+            count: 1,
+            label: o.params.label ?? "",
+            file: { name: o.params.name ?? "", reason: o.params.reason, limit: o.params.limit ?? null },
+          });
+          continue;
+        }
+        const blocked = o.params.blockedReason;
+        const reason = blocked === "vanished" || blocked === "changed" ? blocked : "refused";
+        out.push({
+          id: o.id,
+          configId,
+          kind: o.kind,
+          channelId: o.params.channelId ?? null,
+          reason,
+          error: reason === "refused" ? (o.lastError ?? "") : "",
+          count: o.params.count ?? 1,
+          label: o.params.label ?? "",
+          ...(MESSAGE_KINDS.includes(o.kind) || o.kind === CHAT_STAR
+            ? { message: targetOf(o) }
+            : {}),
+          ...(o.kind === CHAT_EDIT && reason === "changed"
+            ? {
+              edit: {
+                target: targetOf(o),
+                text: o.params.text ?? "",
+                mentions: o.params.mentions ?? EMPTY_MENTIONS,
+                deleted: o.params.conflict === "deleted",
+              },
+            }
+            : {}),
+          ...(o.kind === CHAT_RECORD_POST
+            ? { reply: { thread: o.params.thread, text: o.params.text ?? "", note: o.params.note !== false, files: o.params.files ?? [] } }
+            : {}),
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Dismisses a notice: its outbox row goes, and for a refused file its
+   * row and file; for a refused reply on a record, its files (rows, staged
+   * copies, any upload of them still queued).
+   */
+  async dismissNotice(configId: string, id: string): Promise<void> {
+    const op = await this.db.getOutboxOp(id);
+    if (!op || op.configId !== configId || op.status !== "blocked" || !NOTICE_KINDS.includes(op.kind)) return;
+    await this.outbox.cancel(id);
+    if (op.kind === CHAT_FILE_REFUSED && op.params.localUuid) await this.dropOutgoing(configId, [op.params.localUuid]);
+    if (op.kind === CHAT_RECORD_POST && (op.params.files ?? []).length > 0) {
+      const files = new Set<string>(op.params.files);
+      const uploads = (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_UPLOAD && files.has(o.params.localUuid));
+      this.stopUploads(uploads);
+      for (const up of uploads) await this.outbox.cancel(up.id);
+      await this.dropOutgoing(configId, [...files]);
+    }
+  }
+
+  /**
+   * A create or join the server refused: every chat row of the account
+   * naming the conversation leaves the outbox (the op and what waits for
+   * it), and the conversation stays listed as failed (createFailed), its
+   * texts kept as failed messages, until the user dismisses it
+   * (discardCreate). A direct message pinned again is a conversation that
+   * exists: it is only unpinned again, and its posts still go to it.
+   */
+  failCreate(configId: string, channelId: number): Promise<void> {
+    return this.exclusive(configId, async () => {
+      const channel = await this.repo.channel(configId, channelId);
+      if (channelId >= 0 && channel?.channelType === "chat") {
+        if (channel.createOpId) await this.outbox.cancel(channel.createOpId);
+        await this.repo.patchChannel(configId, channelId, { isPinned: false, createOpId: null });
+        return;
+      }
+      await this.dropChannels(configId, [channelId]);
+      await this.repo.failPending(configId, channelId);
+      await this.repo.patchChannel(configId, channelId, { createOpId: null, createFailed: true });
+    });
+  }
+
+  /**
+   * The user gives up a conversation still being created or joined, or
+   * dismisses one the server refused: its rows leave the outbox, and the
+   * conversation goes from the cache with its unsent texts. A direct
+   * message pinned again keeps its history and is only unpinned again. A
+   * conversation left with texts unsent (leftUnsent) goes with them; its
+   * leave stays queued.
+   */
+  discardCreate(configId: string, channelId: number): Promise<void> {
+    return this.exclusive(configId, async () => {
+      const channel = await this.repo.channel(configId, channelId);
+      if (channel?.leftUnsent) {
+        await this.repo.dropChannel(configId, channelId);
+        return;
+      }
+      if (!channel || (!channel.createOpId && !channel.createFailed)) return;
+      if (channelId >= 0 && channel.channelType === "chat") {
+        if (channel.createOpId) await this.outbox.cancel(channel.createOpId);
+        await this.repo.patchChannel(configId, channelId, { isPinned: false, createOpId: null });
+        return;
+      }
+      await this.dropChannels(configId, [channelId]);
+      await this.repo.dropChannel(configId, channelId);
+    });
+  }
+
+  /**
+   * At startup: a create or join stored "incomplete" was cut between its op
+   * and its row. With the row written (its createOpId names the op) it is
+   * queued; without it, it is removed. A post with files cut while being
+   * queued is queued with its uploads when its message was written, else
+   * removed with them, its rows and files; the files it took from the
+   * conversation's draft go back to the draft instead, with its text
+   * (joinDraftText, ahead of what the draft holds) unless the draft holds
+   * it already (draftText), and a staged file a draft row still names is never
+   * deleted. An incomplete upload no post waits for is removed. A post
+   * that goes (its message stored, or queued as a text before it) has its
+   * draftText removed from the draft (a kill between the two), unless the
+   * draft was stored after the post. A reply on a record cut the same way
+   * is queued when every one of its files has its row, else removed as
+   * such a post is, its draft files and text going back to the record's
+   * draft. Returns how many were queued.
+   */
+  async recoverIncomplete(): Promise<number> {
+    let queued = 0;
+    for (const configId of await this.db.getLiveSyncConfigIds()) {
+      const all = await this.db.getOutboxOpsForConfig(configId);
+      const byId = new Map(all.map((o) => [o.id, o]));
+      const kept = new Set<string>();
+      const pending = new Set([...(await this.repo.pendingMessages(configId)).values()].flat().map((m) => m.clientUuid));
+      for (const post of all.filter((o) => o.kind === CHAT_POST && o.status === "incomplete")) {
+        const chain: OutboxOp[] = [];
+        for (let up = post.dependsOn ? byId.get(post.dependsOn) : undefined; up?.kind === CHAT_UPLOAD && up.status === "incomplete";
+          up = up.dependsOn ? byId.get(up.dependsOn) : undefined) chain.push(up);
+        chain.forEach((up) => kept.add(up.id));
+        if (pending.has(post.clientUuid)) {
+          for (const op of [...chain.reverse(), post]) await this.outbox.complete(op.id, {});
+          queued++;
+        } else {
+          for (const op of [...chain, post]) await this.outbox.cancel(op.id);
+          const drafted = new Set<string>(post.params.drafts ?? []);
+          const rows = (await this.repo.outgoingOf(configId, post.clientUuid)).map((r) => r.localUuid!);
+          await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
+          await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
+          // A text the composer sent is still the draft's: only another one is given back
+          if (drafted.size > 0 && post.params.text && typeof post.params.draftText !== "string") {
+            // The post's text is older than what the draft holds now
+            const channelId: number = post.params.channelId;
+            const held = (await this.repo.draftOf(configId, channelId)).text;
+            await this.repo.putDraftText(configId, channelId, joinDraftText(post.params.text, held));
+          }
+          // Cut before its rows: the uploads' params still name the staged files
+          await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));
+        }
+      }
+      for (const reply of all.filter((o) => o.kind === CHAT_RECORD_POST && o.status === "incomplete")) {
+        const chain: OutboxOp[] = [];
+        for (let up = reply.dependsOn ? byId.get(reply.dependsOn) : undefined; up?.kind === CHAT_UPLOAD && up.status === "incomplete";
+          up = up.dependsOn ? byId.get(up.dependsOn) : undefined) chain.push(up);
+        chain.forEach((up) => kept.add(up.id));
+        const rows = (await this.repo.outgoingOf(configId, reply.clientUuid)).map((r) => r.localUuid!);
+        if (rows.length === (reply.params.files ?? []).length) {
+          for (const op of [...chain.reverse(), reply]) await this.outbox.complete(op.id, {});
+          queued++;
+          continue;
+        }
+        for (const op of [...chain, reply]) await this.outbox.cancel(op.id);
+        const drafted = new Set<string>(reply.params.drafts ?? []);
+        await this.repo.backToDraft(configId, rows.filter((u) => drafted.has(u)));
+        await this.dropOutgoing(configId, rows.filter((u) => !drafted.has(u)));
+        if (drafted.size > 0 && reply.params.text && typeof reply.params.draftText !== "string") {
+          const held = (await this.repo.draftOf(configId, draftThreadOf(reply))).text;
+          await this.repo.putDraftText(configId, draftThreadOf(reply), joinDraftText(reply.params.text, held));
+        }
+        await this.removeFiles(await this.notDrafts(configId, chain.map((up) => up.params)));
+      }
+      for (const up of all.filter((o) => o.kind === CHAT_UPLOAD && o.status === "incomplete" && !kept.has(o.id))) {
+        await this.outbox.cancel(up.id);
+        await this.removeFiles(await this.notDrafts(configId, [up.params]));
+      }
+      // A post that goes (its message stored, or a text queued before its bubble) whose text a kill left in the draft;
+      // a draft stored after the post is the same text typed again
+      const stored = await this.repo.queuedMessageUuids(configId);
+      for (const op of await this.db.getOutboxOpsForConfig(configId)) {
+        if (op.kind === CHAT_RECORD_POST && op.status !== "incomplete") {
+          await this.releaseDraftText(configId, draftThreadOf(op), op.params.draftText, op.createdAt);
+        }
+        if (op.kind !== CHAT_POST || (!stored.has(op.clientUuid) && op.status === "incomplete")) continue;
+        await this.releaseDraftText(configId, op.params.channelId, op.params.draftText, op.createdAt, op.params.parent);
+      }
+      for (const op of all) {
+        if (op.status !== "incomplete" || (op.kind !== CHAT_CREATE && op.kind !== CHAT_JOIN)) continue;
+        const channel = await this.repo.channel(configId, op.params.channelId);
+        if (channel?.createOpId === op.id) {
+          await this.outbox.complete(op.id, {});
+          queued++;
+        } else {
+          await this.outbox.cancel(op.id);
+        }
+      }
+    }
+    return queued;
+  }
+
+  /**
+   * Drains the chat rows of the server the credentials open, then starts
+   * its uploads beside them (pumpUploads) without waiting for them: a long
+   * upload holds its own post and the posts after it in its conversation,
+   * nothing else. A server with no live application has nothing to send
+   * to: its rows are left as they are and the call completes. The result
+   * counts the drain only; each upload that ends tells the screens
+   * (changed) and flushes the account again.
+   */
+  async flush(creds: SyncCredentials, opts: { force?: boolean } = {}): Promise<DrainResult> {
+    const configId = syncConfigIdFor(creds.odooUrl, creds.username, creds.database);
+    if (!(await this.db.getLiveSyncConfigIds()).has(configId)) {
+      return { done: 0, failed: 0, blocked: 0, held: 0, errors: [] };
+    }
+    const result = await this.outbox.drain(creds, configId, {
+      force: opts.force, onlyNoteIds: new Set([CHAT_NOTE]), skipKinds: LANE_KINDS,
+    });
+    this.pumpUploads(creds, configId, !!opts.force);
+    return result;
+  }
+
+  /** Runs `work` as part of the account's lane, so whenIdle waits for it. */
+  private laneTrack<T>(configId: string, work: Promise<T>): Promise<T> {
+    let set = this.laneWork.get(configId);
+    if (!set) this.laneWork.set(configId, (set = new Set()));
+    const tracked = set;
+    tracked.add(work);
+    void work.then(() => undefined, () => undefined).then(() => {
+      tracked.delete(work);
+      if (tracked.size === 0 && this.laneWork.get(configId) === tracked) this.laneWork.delete(configId);
+    });
+    return work;
+  }
+
+  /**
+   * Starts the account's due upload ops whose dependency is done (see
+   * OutboxService.isDue; force skips the retry delays), oldest first, up
+   * to CHAT_UPLOADS_AT_ONCE running at once; none while the account is
+   * paused (pauseUploads). Not awaited by flush.
+   *
+   * Twins are ordered: uploads the search after a lost answer
+   * (findUploaded) cannot tell apart, as it could find either one's
+   * attachment. Twins have the same name, and the same size unless either
+   * one is looked for by name alone (foundByNameAlone). A running twin
+   * holds every other; a twin with no send yet waits while any twin holds
+   * a send that may have reached the server (uploadSentAt), so its own
+   * attachment never exists while that one is in doubt; among twins in
+   * doubt the earliest uploadSentAt (then the op id) goes first. The
+   * first in that order always may start, so none waits forever.
+   */
+  private pumpUploads(creds: SyncCredentials, configId: string, force: boolean): void {
+    this.laneTrack(configId, this.pumpNow(creds, configId, force)).catch((e) => console.warn("chat: upload lane failed", e));
+  }
+
+  private async pumpNow(creds: SyncCredentials, configId: string, force: boolean): Promise<void> {
+    const ops = await this.db.getOutboxOpsForConfig(configId);
+    const pendingIds = new Set(ops.map((o) => o.id));
+    let running = this.lane.get(configId);
+    if (!running) this.lane.set(configId, (running = new Set()));
+    const startable = (o: OutboxOp) => !(o.dependsOn && pendingIds.has(o.dependsOn)) && this.outbox.isDue(o, force);
+    const twin = (o: OutboxOp, op: OutboxOp) => o.id !== op.id && o.kind === CHAT_UPLOAD
+      && o.params.name === op.params.name
+      && (o.params.size === op.params.size || foundByNameAlone(o) || foundByNameAlone(op));
+    const doubtBefore = (o: OutboxOp, op: OutboxOp) => !!o.params.uploadSentAt
+      && (!op.params.uploadSentAt || o.params.uploadSentAt < op.params.uploadSentAt
+        || (o.params.uploadSentAt === op.params.uploadSentAt && o.id < op.id));
+    const heldByTwin = (op: OutboxOp) => ops.some((o) => twin(o, op) && (running.has(o.id) || doubtBefore(o, op)));
+    // No await from here on: two pumps never start the same op or pass the cap
+    if (this.paused.has(configId)) return;
+    for (const op of dependencyOrder(ops)) {
+      if (running.size >= CHAT_UPLOADS_AT_ONCE) return;
+      if (op.kind !== CHAT_UPLOAD || op.noteId !== CHAT_NOTE || running.has(op.id)) continue;
+      if (!startable(op) || heldByTwin(op)) continue;
+      running.add(op.id);
+      this.laneTrack(configId, this.laneRun(creds, op, running)).catch((e) => console.warn("chat: upload lane failed", e));
+    }
+  }
+
+  /**
+   * One upload of the lane. Done (sent or refused), the account is flushed
+   * again: its post, or the next upload, may run now. Failed, the lane
+   * looks for other due uploads. Held, nothing follows: the next flush
+   * tries again.
+   */
+  private async laneRun(creds: SyncCredentials, op: OutboxOp, running: Set<string>): Promise<void> {
+    let outcome: "done" | "held" | "failed" = "done";
+    try {
+      await this.runUpload(creds, op);
+    } catch (e: unknown) {
+      outcome = e instanceof OutboxHeldError ? "held" : "failed";
+    } finally {
+      running.delete(op.id);
+    }
+    this.changed(op.configId, op.params.channelId ?? null);
+    if (outcome === "done") {
+      this.laneTrack(op.configId, this.flush(creds)).catch((e) => console.warn("chat: flush after an upload failed", e));
+    } else if (outcome === "failed") {
+      this.pumpUploads(creds, op.configId, false);
+    }
+  }
+
+  /** Resolves once no upload runs for the account (for every account without one), the flushes they started included. */
+  async whenIdle(configId?: string): Promise<void> {
+    for (;;) {
+      const busy = [...this.laneWork.entries()]
+        .filter(([id]) => configId === undefined || id === configId)
+        .flatMap(([, set]) => [...set]);
+      if (busy.length === 0) return;
+      await Promise.allSettled(busy);
+    }
+  }
+
+  /** Bytes of the file sent so far while its upload is on the wire, else null. */
+  uploadProgress(localUuid: string): { done: number; total: number } | null {
+    for (const p of this.progress.values()) {
+      if (p.localUuid === localUuid) return { done: p.done, total: p.total };
+    }
+    return null;
+  }
+
+  /**
+   * The transport's progress events (ChatHttp.onProgress) behind
+   * uploadProgress; subscribed at the first upload, the previous source
+   * unsubscribed.
+   */
+  setProgressSource(source: ((fn: (p: TransferProgress) => void) => () => void) | null): void {
+    this.progressOff?.();
+    this.progressOff = null;
+    this.progressSource = source;
+  }
+
+  private watchProgress(): void {
+    if (this.progressOff || !this.progressSource) return;
+    this.progressOff = this.progressSource((p) => {
+      const known = this.progress.get(p.id);
+      if (known) this.progress.set(p.id, { ...known, done: p.done, total: p.total ?? known.total });
+    });
+  }
+
+  /** Posts of the account still in the outbox, replies on records too, failed and blocked ones included. */
+  async pendingPostCount(configId: string): Promise<number> {
+    return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_POST || o.kind === CHAT_RECORD_POST).length;
+  }
+
+  /** Files of the account still to be uploaded (their ops, failed ones included). */
+  async pendingUploadCount(configId: string): Promise<number> {
+    return (await this.db.getOutboxOpsForConfig(configId)).filter((o) => o.kind === CHAT_UPLOAD).length;
+  }
+
+  /**
+   * Stops the uploads among `ops` that run now: the transfer on the wire
+   * is cancelled, one not started yet never starts. The op then ends as
+   * sendUpload decides (refused "left" for a conversation being left).
+   */
+  private stopUploads(ops: OutboxOp[]): void {
+    for (const op of ops) {
+      if (op.kind !== CHAT_UPLOAD || op.status !== "running") continue;
+      const transferId = this.transfers.get(op.id);
+      if (transferId && this.transfer) {
+        this.transfer.cancel(transferId).catch((e) => console.warn("chat: upload cancel failed", e));
+      } else {
+        this.stopped.add(op.id);
+      }
+    }
+  }
+
+  /** Refuses (`reason`) the files of a post still to be sent. */
+  private async refuseFilesOf(configId: string, postClientUuid: string, reason: string): Promise<void> {
+    for (const row of await this.repo.outgoingOf(configId, postClientUuid)) {
+      if (row.localUuid && (row.state === "queued" || row.state === "uploaded")) await this.repo.setRefused(configId, row.localUuid, reason);
+    }
+  }
+
+  /** Removes the chat rows of the given channels from the outbox, posts and reads alike; their uploads stop. */
+  async dropChannels(configId: string, channelIds: number[]): Promise<void> {
+    const gone = new Set(channelIds);
+    const mine = (await this.db.getOutboxOpsForConfig(configId)).filter((op) => op.noteId === CHAT_NOTE && gone.has(op.params.channelId));
+    this.stopUploads(mine);
+    for (const op of mine) await this.outbox.cancel(op.id);
+  }
+
+  /**
+   * The server took these conversations away (a leave or a delete from the
+   * bus): their rows leave the outbox as dropChannels does. When the user
+   * still had actions waiting for one (USER_ACTIONS, queued or given up as
+   * notices), one notice per conversation (CHAT_DROPPED, blocked) says how
+   * many were cancelled (one per targetKey, whatever the number of ops),
+   * its count added to the one such a notice already
+   * held; it stays until dismissed.
+   */
+  async dropTaken(configId: string, channelIds: number[]): Promise<void> {
+    const ops = await this.db.getOutboxOpsForConfig(configId);
+    for (const channelId of channelIds) {
+      const mine = ops.filter((o) => o.noteId === CHAT_NOTE && o.params.channelId === channelId);
+      this.stopUploads(mine);
+      // One action per key (per person for a removal, per message and emoji for a reaction), however many ops of it
+      // wait: a follow-up behind a running one, a notice
+      const actions = new Set(mine.filter((o) => USER_ACTIONS.has(o.kind)).map(targetKey));
+      const count = actions.size + mine.reduce((n, o) => n + (o.kind === CHAT_DROPPED ? (o.params.count ?? 0) : 0), 0);
+      for (const o of mine) await this.outbox.cancel(o.id);
+      if (count === 0) continue;
+      const channel = await this.repo.channel(configId, channelId);
+      const earlier = mine.find((o) => o.kind === CHAT_DROPPED)?.params.label ?? "";
+      const notice = await this.outbox.enqueue({
+        noteId: CHAT_NOTE,
+        configId,
+        kind: CHAT_DROPPED,
+        params: { channelId, count, label: channel ? (channel.customChannelName || channel.name) : earlier },
+      });
+      await this.db.updateOutboxOp(notice.id, {
+        status: "blocked",
+        lastError: `${count} actions of conversation ${channelId} cancelled: the server took it away.`,
+        params: { ...notice.params, blockedReason: "vanished", candidates: [] },
+        updatedAt: this.now().toISOString(),
+      });
+    }
+  }
+
+  /**
+   * Pauses the lanes of these config ids: no upload starts under them
+   * until as many resumeUploads named them, whoever pumps. Their running uploads stop; the
+   * call resolves once the lanes settled, which waits for no other
+   * upload. A stopped upload ends failed, its send kept in doubt
+   * (uploadSentAt), so its retry looks for what that send made. The ops
+   * stay in the outbox.
+   */
+  async pauseUploads(configIds: string[]): Promise<void> {
+    for (const id of configIds) this.paused.set(id, (this.paused.get(id) ?? 0) + 1);
+    for (const id of configIds) {
+      this.stopUploads((await this.db.getOutboxOpsForConfig(id)).filter((op) => op.noteId === CHAT_NOTE));
+    }
+    for (const id of configIds) await this.whenIdle(id);
+  }
+
+  /**
+   * Ends one pauseUploads of these config ids: a lane no other pause holds
+   * starts uploads again, at the next flush.
+   */
+  resumeUploads(configIds: string[]): void {
+    for (const id of configIds) {
+      const left = (this.paused.get(id) ?? 0) - 1;
+      if (left > 0) this.paused.set(id, left);
+      else this.paused.delete(id);
+    }
+  }
+
+  /** Removes every chat row of the account from the outbox, posts and reads alike; its uploads stop. */
+  async dropAll(configId: string): Promise<void> {
+    const mine = (await this.db.getOutboxOpsForConfig(configId)).filter((op) => op.noteId === CHAT_NOTE);
+    this.stopUploads(mine);
+    for (const op of mine) await this.outbox.cancel(op.id);
+  }
+
+  private runPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendPost(creds, running));
+  }
+
+  /**
+   * The stamp of the op's last send that may have reached the server, once
+   * its quiet window is over; throws OutboxRetryLaterError inside it.
+   */
+  private async quietStamp(creds: SyncCredentials, op: OutboxOp): Promise<string | undefined> {
+    let sentAt: string | undefined = op.params.createSentAt ?? undefined;
+    if (sentAt && new Date(sentAt).getTime() > this.now().getTime()) {
+      // Stored under a clock that ran fast: the window restarts once, now
+      sentAt = this.now().toISOString();
+      await this.outbox.setParams(op.id, { createSentAt: sentAt });
+    }
+    if (sentAt) {
+      const quietUntil = new Date(new Date(sentAt).getTime() + CREATE_QUIET_WINDOW_MS);
+      if (quietUntil.getTime() > this.now().getTime()) {
+        throw new OutboxRetryLaterError(
+          `The previous send may still be running on ${creds.odooUrl}; retry after ${quietUntil.toISOString()}.`,
+          quietUntil.toISOString(),
+        );
+      }
+    }
+    return sentAt;
+  }
+
+  /**
+   * Posts the text with the files its uploads left "uploaded", in pick
+   * order (postFiles): post_data.attachment_ids and a top-level
+   * attachment_tokens of the same length (false each: an internal user's
+   * pending attachments carry no token). With no text and no file left the
+   * message fails and the op ends. A refusal of a post with files, before
+   * any re-upload, asks the server which ids it still holds
+   * (reuploadVanished): the missing ones are uploaded again once, chained
+   * before the post, and the post waits for them. Any other refusal blocks
+   * it as for a text.
+   *
+   * The body, partner_ids and special_mentions come from one composeBody
+   * of the text and its picks, so the anchors and the people notified
+   * always agree; each list goes only when non-empty, as the browser does.
+   * parent_id is the parent's server id at this send (parentIdOf), left
+   * out without one.
+   */
+  private async sendPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const { channelId, text } = op.params;
+    if (await this.leaving(op.configId, channelId)) {
+      // Left while this post was on the wire or waiting for its retry: never sent after the leave
+      await this.repo.failQueued(op.configId, op.clientUuid);
+      await this.refuseFilesOf(op.configId, op.clientUuid, "left");
+      await this.repo.patchChannel(op.configId, channelId, { leftUnsent: true });
+      this.changed(op.configId, channelId);
+      return;
+    }
+    const useModule = !!op.params.useModule;
+    const files = await this.postFiles(op);
+    if (files === "nothing") {
+      await this.repo.failQueued(op.configId, op.clientUuid);
+      this.changed(op.configId, channelId);
+      return;
+    }
+    const { ids, rows } = files;
+    // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
+    const composed = composeBody(text, op.params.mentions ?? EMPTY_MENTIONS, op.params.plainText ? [] : await emojiConversions());
+    const body = composed.body + chatMarker(op.clientUuid);
+    const parentId = await this.parentIdOf(op.configId, op.params.parent);
+    const sentAt = await this.quietStamp(creds, op);
+
+    let messageId: number | null = null;
+    let result: any = null;
+    try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the post waits for the network.");
+      // A retry, or a post handed over by native code whose send may have reached Odoo, looks for its marker first
+      const searchFirst = op.attempts > 1 || !!op.params.maybeSent;
+      const found = searchFirst ? await this.findSent(creds, op, { model: CHANNEL_MODEL, resId: channelId }) : null;
+      if (found) {
+        messageId = found.id;
+        // The body and parent the server holds, so the message settles on them and not on the pending ones
+        result = { "mail.message": [{
+          id: found.id, body: found.body, thread: { id: channelId, model: CHANNEL_MODEL }, parentMessage: found.parentId ?? false,
+        }] };
+      }
+      if (messageId === null) {
+        await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
+        const postData: Record<string, any> = {
+          body,
+          message_type: "comment",
+          subtype_xmlid: "mail.mt_comment",
+        };
+        if (useModule) postData.erplibre_client_uuid = op.clientUuid;
+        if (ids.length > 0) postData.attachment_ids = ids;
+        if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
+        if (composed.specialMentions.length > 0) postData.special_mentions = composed.specialMentions;
+        if (parentId !== null) postData.parent_id = parentId;
+        result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
+            thread_model: CHANNEL_MODEL,
+            thread_id: channelId,
+            post_data: postData,
+            ...(ids.length > 0 ? { attachment_tokens: ids.map(() => false) } : {}),
+            context: { temporary_id: op.clientUuid },
+          }));
+        const id = result?.["mail.message"]?.[0]?.id;
+        if (typeof id !== "number") {
+          // The server may have posted: a retry finds the message by its marker
+          throw new Error("The post answer holds no message id.");
+        }
+        messageId = id;
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        // Nothing of this attempt reached the server: the stamp goes back to the earlier one, whose window is over
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
+      if ((isRefused(e) || e instanceof OutboxBlockedError) && (await this.leaving(op.configId, channelId))) {
+        // Given up while the user leaves: done, not blocked, so the leave behind it runs
+        await this.repo.failQueued(op.configId, op.clientUuid);
+        await this.repo.patchChannel(op.configId, channelId, { leftUnsent: true });
+        this.changed(op.configId, channelId);
+        return;
+      }
+      if (!isRefused(e)) throw e;
+      if (ids.length > 0 && !op.params.reuploaded && (await this.reuploadVanished(creds, op, rows, ids))) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} are uploaded again before the post.`, this.now().toISOString());
+      }
+      // Refused for good: the quiet window must not hold a later manual retry
+      await this.outbox.setParams(op.id, { createSentAt: null });
+      await this.repo.markFailed(op.configId, op.clientUuid, (e as Error).message);
+      throw new OutboxBlockedError((e as Error).message, "refused", [], op.kind, op.id);
+    }
+
+    await this.settle(op, messageId, result);
+  }
+
+  /**
+   * The files a post (or a reply on a record) links, once its uploads ran:
+   * the server ids of its rows left "uploaded", in pick order, with the
+   * rows. A file still queued holds the post: a row no upload op names gets
+   * one (requeueOrphans) and the post retries at once
+   * (OutboxRetryLaterError), else a plain error retries it later. A
+   * refused file is left out. "nothing": the post had files, every one was
+   * refused and it has no text, so nothing is left to post.
+   */
+  private async postFiles(op: OutboxOp): Promise<{ ids: number[]; rows: ChatAttachment[] } | "nothing"> {
+    const withFiles = (op.params.files ?? []).length > 0;
+    const rows = withFiles ? await this.repo.outgoingOf(op.configId, op.clientUuid) : [];
+    if (rows.some((r) => r.state === "queued")) {
+      if (await this.requeueOrphans(op, rows)) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} wait for their upload again.`, this.now().toISOString());
+      }
+      throw new Error("A file of the post is still to be uploaded.");
+    }
+    const ids = rows.filter((r) => r.state === "uploaded" && r.attachmentId !== null).map((r) => r.attachmentId!);
+    // Every file refused and no text: nothing is left to post
+    if (withFiles && ids.length === 0 && !String(op.params.text ?? "").trim()) return "nothing";
+    return { ids, rows };
+  }
+
+  /**
+   * Queued rows of a post that no upload op names (a cut between a row put
+   * back in the queue and its new op) get one, chained before the post
+   * behind what it waited for. Returns whether any was made.
+   */
+  private async requeueOrphans(op: OutboxOp, rows: ChatAttachment[]): Promise<boolean> {
+    const ops = await this.db.getOutboxOpsForConfig(op.configId);
+    const named = new Set(ops.filter((o) => o.kind === CHAT_UPLOAD).map((o) => o.params.localUuid));
+    const orphans = rows.filter((r) => r.state === "queued" && r.localUuid && !named.has(r.localUuid));
+    if (orphans.length === 0) return false;
+    let previous = (await this.db.getOutboxOp(op.id))?.dependsOn ?? null;
+    for (const r of orphans) previous = (await this.enqueueUpload(op, r, previous)).id;
+    await this.db.updateOutboxOp(op.id, { dependsOn: previous, updatedAt: this.now().toISOString() });
+    return true;
+  }
+
+  /** A new upload op for the row of a post's file, after `dependsOn`; its size is the file's on the phone. */
+  private async enqueueUpload(op: OutboxOp, r: ChatAttachment, dependsOn: string | null): Promise<OutboxOp> {
+    const path = r.originalPath ?? "";
+    const size = (path ? await this.files.size(path) : null) ?? r.size;
+    const file: OutgoingFile = { localUuid: r.localUuid!, path, name: r.name, mimetype: r.mimetype, size, voice: r.voice };
+    return this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId: op.configId,
+      kind: CHAT_UPLOAD,
+      params: this.uploadParams(op.params.channelId, file, uploadsByModule(op), op.params.thread),
+      dependsOn,
+    });
+  }
+
+  /**
+   * After a refused post: the ids the server no longer holds (a pending
+   * attachment collected by Odoo's daily clean-up, deleted meanwhile) are
+   * queued for upload again, their rows back to "queued", the new upload
+   * ops chained before the post; the post is marked reuploaded (once only)
+   * and its send stamp cleared, the refusal proving nothing was posted.
+   * Returns false when every id is still there.
+   */
+  private async reuploadVanished(creds: SyncCredentials, op: OutboxOp, rows: ChatAttachment[], ids: number[]): Promise<boolean> {
+    const held = new Set((await this.rpc.searchRead<{ id: number }>(creds, "ir.attachment", [["id", "in", ids]], ["id"]))
+      .map((a) => a.id));
+    const gone = rows.filter((r) => r.state === "uploaded" && r.attachmentId !== null && !held.has(r.attachmentId) && r.localUuid);
+    if (gone.length === 0) return false;
+    let previous: string | null = null;
+    for (const r of gone) {
+      await this.repo.requeueUpload(op.configId, r.localUuid!);
+      previous = (await this.enqueueUpload(op, r, previous)).id;
+    }
+    await this.db.updateOutboxOp(op.id, { dependsOn: previous, updatedAt: this.now().toISOString() });
+    await this.outbox.setParams(op.id, { reuploaded: true, createSentAt: null });
+    return true;
+  }
+
+  /**
+   * The id, body and parent (`parent_id`, null for none) of the user's own
+   * message on `thread` (a channel, or the record a reply goes to) that
+   * carries this op's marker comment exactly, or null. The search is by
+   * author and the hit is checked on the whole comment, so another
+   * member's message that quotes the uuid is never taken for the post. Two
+   * hits block the op.
+   */
+  private async findSent(
+    creds: SyncCredentials,
+    op: OutboxOp,
+    thread: { model: string; resId: number },
+  ): Promise<{ id: number; body: string; parentId: number | null } | null> {
+    const partnerId = (await this.rpc.sessionInfo(creds)).partnerId;
+    if (!partnerId) throw new Error("The author partner of the session is unknown.");
+    const found = (await this.rpc.searchRead<{ id: number; body: string; parent_id: [number, string] | false }>(
+      creds,
+      "mail.message",
+      [
+        ["model", "=", thread.model],
+        ["res_id", "=", thread.resId],
+        ["author_id", "=", partnerId],
+        ["body", "ilike", clientMarker(op.clientUuid)],
+      ],
+      ["id", "body", "parent_id"],
+      { limit: 2 },
+    )).filter((m) => bodyHasMarker(m.body ?? "", op.clientUuid));
+    if (found.length > 1) {
+      throw new OutboxBlockedError(
+        `Two messages carry the marker of ${op.clientUuid}.`,
+        "ambiguous",
+        found.map((m) => m.id),
+        op.kind,
+        op.id,
+      );
+    }
+    if (found.length === 0) return null;
+    const parent = found[0].parent_id;
+    return { id: found[0].id, body: found[0].body ?? "", parentId: Array.isArray(parent) ? parent[0] : null };
+  }
+
+  /**
+   * Gives the pending message its server id, applies the Store the post
+   * answered, and marks the channel read for its author as Odoo does on a
+   * post, unless a newer message is already known. The answer's
+   * `parentMessage` is the message's parent: false (a parent the server
+   * did not find in the channel) gives a plain message, no notice. A post
+   * found by its marker answers the `parent_id` the server holds the same
+   * way; an answer without it keeps the parent the pending row named. Runs
+   * in the account's queue of counter writers (serial). An op no longer
+   * stored (its account was erased while the post was on the wire) writes
+   * nothing.
+   */
+  private settle(op: OutboxOp, messageId: number, result: any): Promise<void> {
+    return this.serial(op.configId, () => this.settleNow(op, messageId, result));
+  }
+
+  private async settleNow(op: OutboxOp, messageId: number, result: any): Promise<void> {
+    const { configId } = op;
+    if (!(await this.db.getOutboxOp(op.id))) return;
+    let parentId: number | null | undefined;
+    if (result) {
+      const self = (await this.repo.sourceState(configId)).selfPartnerId;
+      const delta = parseStore(result, configId, self);
+      parentId = delta.messages.find((m) => m.messageId === messageId)?.parentId;
+      await this.repo.applyDelta(configId, delta);
+    }
+    await this.repo.settlePending(configId, op.clientUuid, messageId, parentId !== undefined ? { parentId } : {});
+    await this.showQueuedBody(configId, op.clientUuid, messageId);
+    if ((op.params.files ?? []).length > 0) await this.keepSentFiles(configId, op.clientUuid, messageId);
+    const channel = await this.repo.channel(configId, op.params.channelId);
+    if (!channel) return;
+    const patch: Record<string, number | null> = {
+      seenMessageId: Math.max(channel.seenMessageId ?? 0, messageId),
+    };
+    if (!channel.lastMessageId || channel.lastMessageId <= messageId) {
+      patch.unreadCounter = 0;
+      patch.newMessageSeparator = Math.max(channel.newMessageSeparator ?? 0, messageId + 1);
+    }
+    await this.repo.patchChannel(configId, channel.channelId, patch);
+  }
+
+  /**
+   * After a post settled: the edit or delete queued while it ran shows
+   * again over the server's body (overlayBodies), and an edit takes that
+   * body as its base.
+   */
+  private async showQueuedBody(configId: string, clientUuid: string, messageId: number): Promise<void> {
+    const queued = (await this.db.getOutboxOpsForConfig(configId))
+      .some((o) => (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.params.clientUuid === clientUuid);
+    const row = queued ? await this.repo.message(configId, messageId) : null;
+    if (!row) return;
+    const delta: StoreDelta = { ...emptyDelta(), messages: [{ messageId, body: row.body }] };
+    await this.overlayBodies(configId, delta);
+    await this.repo.applyDelta(configId, delta);
+  }
+
+  /**
+   * The uploaded files of a settled post become the message's attachments
+   * (ChatRepository.adoptOutgoing) and the conversation's cached originals:
+   * each file moves from out/<localUuid>/ to files/<attachmentId>/, so the
+   * sender never downloads its own file. A file that cannot be moved stays
+   * where it is, still recorded as the original.
+   */
+  private async keepSentFiles(configId: string, postClientUuid: string, messageId: number): Promise<void> {
+    const fileDir = await this.repo.fileDirOf(configId);
+    for (const a of await this.repo.adoptOutgoing(configId, postClientUuid, messageId)) {
+      if (!a.originalPath || a.attachmentId === null) continue;
+      const kept = originalFilePath(fileDir, a.attachmentId, a.name);
+      if (a.originalPath === kept) continue;
+      try {
+        await this.files.rename(a.originalPath, kept);
+        await this.repo.setOriginal(configId, a.attachmentId, kept, a.originalBytes);
+        if (a.originalPath.includes("/out/")) await this.files.removeDir(a.originalPath.slice(0, a.originalPath.lastIndexOf("/")));
+      } catch (e: unknown) {
+        console.warn("chat: a sent file stays in the outgoing directory", e);
+      }
+    }
+  }
+
+  private runRecordPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendRecordPost(creds, running));
+  }
+
+  /**
+   * Posts a reply on its record (CHAT_RECORD_POST) with the files postFiles
+   * gives, as sendPost does for a channel: body of composeBody plus the
+   * op's marker, mail.mt_note for a note (mail_post_autofollow false: no
+   * follower added) or mail.mt_comment, email_add_signature as the
+   * browser's composer always sends it (the user's signature in the emails
+   * a message makes), partner_ids of the picks (no
+   * special mentions off a channel), parent_id the inbox item's message it
+   * answers (as the browser's reply from the inbox), the client uuid with
+   * the module. The
+   * send stamps createSentAt and a retry, past the quiet window, first
+   * looks for the reply by its marker on the record (findSent). A file the
+   * record refused (its upload answered "refused" or "not_found", rows
+   * written by refuseRecordFile) or a refused post (NotFound, AccessError:
+   * no right to post there, or the record gone) blocks the reply with
+   * reason "refused": its text and files stay on the phone, as a notice,
+   * until it is dismissed. Every file refused otherwise and no text: the op
+   * ends, nothing is posted. Once posted, its files leave the phone: no
+   * screen shows a record's chatter.
+   */
+  private async sendRecordPost(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const thread: RecordThread = op.params.thread;
+    const note = op.params.note !== false;
+    if ((op.params.files ?? []).length > 0) {
+      const denied = (await this.repo.outgoingOf(op.configId, op.clientUuid))
+        .find((r) => r.state === "refused" && (r.error === "refused" || r.error === "not_found"));
+      if (denied) {
+        throw new OutboxBlockedError(`The record refused the file ${denied.name} (${denied.error}).`, "refused", [], op.kind, op.id);
+      }
+    }
+    const files = await this.postFiles(op);
+    if (files === "nothing") {
+      this.changed(op.configId, null);
+      return;
+    }
+    const { ids, rows } = files;
+    // Built before any stamp: a conversion chunk that fails to load is a plain retry, never a possible send
+    const composed = composeBody(op.params.text, op.params.mentions ?? EMPTY_MENTIONS, await emojiConversions());
+    const body = composed.body + chatMarker(op.clientUuid);
+    const sentAt = await this.quietStamp(creds, op);
+    try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the reply waits for the network.");
+      const found = op.attempts > 1 ? await this.findSent(creds, op, thread) : null;
+      if (!found) {
+        await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
+        const postData: Record<string, any> = {
+          body,
+          email_add_signature: true,
+          message_type: "comment",
+          subtype_xmlid: note ? "mail.mt_note" : "mail.mt_comment",
+        };
+        if (ids.length > 0) postData.attachment_ids = ids;
+        if (composed.partnerIds.length > 0) postData.partner_ids = composed.partnerIds;
+        if (op.params.useModule) postData.erplibre_client_uuid = op.clientUuid;
+        if (typeof op.params.parentId === "number") postData.parent_id = op.params.parentId;
+        const result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/mail/message/post", {
+            thread_model: thread.model,
+            thread_id: thread.resId,
+            post_data: postData,
+            ...(ids.length > 0 ? { attachment_tokens: ids.map(() => false) } : {}),
+            context: { temporary_id: op.clientUuid, mail_post_autofollow: !note },
+          }));
+        if (typeof result?.["mail.message"]?.[0]?.id !== "number") {
+          // The server may have posted: a retry finds the reply by its marker
+          throw new Error("The reply's answer holds no message id.");
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        // Nothing of this attempt reached the server: the stamp goes back to the earlier one, whose window is over
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
+      if (!isRefused(e)) throw e;
+      if (ids.length > 0 && !op.params.reuploaded && (await this.reuploadVanished(creds, op, rows, ids))) {
+        throw new OutboxRetryLaterError(`Files of ${op.clientUuid} are uploaded again before the reply.`, this.now().toISOString());
+      }
+      // Refused for good: the quiet window must not hold a later manual retry
+      await this.outbox.setParams(op.id, { createSentAt: null });
+      throw new OutboxBlockedError((e as Error).message, "refused", [], op.kind, op.id);
+    }
+    await this.dropOutgoing(op.configId, op.params.files ?? []);
+    this.changed(op.configId, null);
+  }
+
+  private runUpload(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendUpload(creds, running))
+      .finally(() => this.stopped.delete(op.id));
+  }
+
+  /**
+   * Uploads one file of a post as a pending attachment of its channel, or
+   * of the record a reply goes to (params.thread), in this order: a
+   * conversation being left refuses the file ("left"; never a record's); Wi-Fi
+   * only and off Wi-Fi holds the op (OutboxHeldError: no attempt, no
+   * delay); offline waits for the network; a file no longer on the phone
+   * ("missing") or over the session's limit with UPLOAD_SLACK_BYTES
+   * ("too_big") is refused without a request. Then, with the module
+   * (useModule), the module route with the op's client uuid: a retry gets
+   * the attachment the first send made. Without it, a retry after a send
+   * that may have reached the server (uploadSentAt) waits
+   * CREATE_QUIET_WINDOW_MS after that send ended (uploadEndedAt, or
+   * uploadSentAt when the app died during it), then looks for the
+   * attachment that send made (findUploaded) and takes it; none found, it
+   * uploads again (a pending upload left behind is collected by Odoo within
+   * a day). uploadSentAt is stamped at the first send; a send that never
+   * reached the server (RequestNotSentError) gives it back, any other
+   * failure stamps uploadEndedAt. A 413 refuses the file ("too_big", no
+   * limit known), a refusal of the route with its reason; a refused file
+   * gets a CHAT_FILE_REFUSED notice and the op ends, so the post goes
+   * without it; a record's file the route refuses is refuseRecordFile's,
+   * which blocks its reply instead. Success records the server's
+   * attachment on the row (ChatRepository.setUploaded).
+   */
+  private async sendUpload(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const { configId } = op;
+    const { channelId, localUuid, path, name, mimetype, size } = op.params;
+    const thread: RecordThread | undefined = op.params.thread;
+    const left = async () => !thread && (await this.leaving(configId, channelId));
+    // Run again after its outcome was written (a kill before the op went): nothing is left to do
+    const row = await this.repo.outgoingFile(configId, localUuid);
+    if (!row || row.state === "refused" || (row.state === "uploaded" && row.attachmentId !== null)) return;
+    if (await left()) return this.refuseLeft(op);
+    if (attachmentSettings().wifiOnly && !(await this.onWifi())) {
+      await this.outbox.setParams(op.id, { heldFor: "wifi" });
+      throw new OutboxHeldError("Wi-Fi only: the file waits for Wi-Fi.", "wifi");
+    }
+    if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the file waits for the network.");
+    if ((await this.files.size(path)) === null) return this.refuseFile(op, "missing");
+    const { maxUploadSize } = await this.rpc.sessionInfo(creds);
+    if (size + UPLOAD_SLACK_BYTES > maxUploadSize) return this.refuseFile(op, "too_big", maxUploadSize);
+    const transfer = this.transfer;
+    if (!transfer) throw new Error("No file transfer is set up.");
+
+    const useModule = !!op.params.useModule;
+    const firstSend = !op.params.uploadSentAt;
+    let sending = false;
+    let record: { id: number; checksum: string; size: number; mimetype: string; name: string } | null = null;
+    try {
+      if (!useModule && op.attempts > 1 && !firstSend) {
+        await this.uploadQuiet(creds, op);
+        record = await this.findUploaded(creds, op);
+      }
+      if (record === null) {
+        if (this.stopped.has(op.id)) throw new ChatTransferCancelledError(`upload ${op.id} stopped before it began`);
+        if (firstSend) await this.outbox.setParams(op.id, { uploadSentAt: this.now().toISOString() });
+        // No await from the check to the transfer's start: a stop meanwhile cancels the transfer itself
+        if (this.stopped.has(op.id)) throw new ChatTransferCancelledError(`upload ${op.id} stopped before it began`);
+        const transferId = `${op.id}-${op.attempts}`;
+        this.transfers.set(op.id, transferId);
+        this.progress.set(transferId, { localUuid, done: 0, total: size });
+        this.watchProgress();
+        sending = true;
+        try {
+          const a = await transfer.upload(creds, {
+            id: transferId,
+            route: useModule ? MODULE_UPLOAD_ROUTE : ODOO_UPLOAD_ROUTE,
+            channelId: thread ? thread.resId : channelId,
+            ...(thread ? { threadModel: thread.model } : {}),
+            clientUuid: useModule ? op.clientUuid : null,
+            voice: !!op.params.voice,
+            path,
+            name,
+            mimetype,
+          });
+          record = {
+            id: a.id,
+            checksum: a.checksum ?? "",
+            size: typeof a.size === "number" ? a.size : size,
+            mimetype: a.mimetype || mimetype,
+            name: a.name || name,
+          };
+        } finally {
+          this.transfers.delete(op.id);
+          this.progress.delete(transferId);
+        }
+      }
+    } catch (e: unknown) {
+      // A leave reached the server meanwhile (a 404, a cancel): the file goes with the conversation, no notice
+      if (await left()) return this.refuseLeft(op);
+      if (e instanceof RequestNotSentError) {
+        // Nothing of this send reached the server: a retry has nothing to look for
+        if (firstSend) await this.outbox.setParams(op.id, { uploadSentAt: null });
+        throw e;
+      }
+      if (e instanceof ChatFileTooBigError) return this.refuseFile(op, "too_big");
+      if (e instanceof ChatTransferRefusedError && e.reason === "not_found" && useModule) await this.moduleRouteGone(op);
+      if (e instanceof ChatTransferRefusedError) return thread ? this.refuseRecordFile(op, e.reason) : this.refuseFile(op, e.reason);
+      // Cancelled by a drop: the op is gone
+      if (e instanceof ChatTransferCancelledError && !(await this.db.getOutboxOp(op.id))) return;
+      if (sending) await this.outbox.setParams(op.id, { uploadEndedAt: this.now().toISOString() });
+      throw e;
+    }
+    // Left while the file was on the wire: the post is gone, the file is not its
+    if (await left()) return this.refuseLeft(op);
+    await this.repo.setUploaded(configId, localUuid, {
+      attachmentId: record.id, checksum: record.checksum, size: record.size, mimetype: record.mimetype, name: record.name,
+    });
+  }
+
+  /**
+   * The module route answered 404 twice: the module may be gone or older.
+   * The module state is probed again (moduleRefused); below the level its
+   * route needs (1.2 for a channel, 1.4 for a record) the file and the
+   * other files of its post take Odoo's route from now on, as a first send
+   * (the module route made nothing), and this throws OutboxRetryLaterError
+   * for a retry at once. Still at that level, it returns: the channel or
+   * the record itself is not found. A probe that fails throws a plain
+   * error: the retry meets the 404 and probes again, the file is not
+   * refused.
+   */
+  private async moduleRouteGone(op: OutboxOp): Promise<void> {
+    try {
+      await this.moduleRefused(op.configId);
+    } catch (probe) {
+      throw new Error(`The module route answered 404 and the module probe failed: ${(probe as Error)?.message ?? probe}`);
+    }
+    if (levelAtLeast(effectiveLevel(await this.repo.sourceState(op.configId)), op.params.thread ? "1.4" : "1.2")) return;
+    const all = await this.db.getOutboxOpsForConfig(op.configId);
+    const post = all.find((o) => (o.kind === CHAT_POST || o.kind === CHAT_RECORD_POST)
+      && (o.params.files ?? []).includes(op.params.localUuid));
+    const siblings = new Set<string>(post?.params.files ?? [op.params.localUuid]);
+    for (const o of all) {
+      if (o.kind === CHAT_UPLOAD && siblings.has(o.params.localUuid)) {
+        await this.outbox.setParams(o.id, { useModule: false, uploadSentAt: null, uploadEndedAt: null });
+      }
+    }
+    if (post) await this.outbox.setParams(post.id, post.kind === CHAT_RECORD_POST ? { useModule: false } : { idempotentUpload: false });
+    throw new OutboxRetryLaterError("The module route is gone: the file goes through Odoo's route.", this.now().toISOString());
+  }
+
+  /**
+   * Throws OutboxRetryLaterError until CREATE_QUIET_WINDOW_MS passed since
+   * the upload's last send ended: the request may still be running on the
+   * server, its row not visible to a search yet. A stamp ahead of the
+   * clock (stored under a clock that ran fast) restarts the window once.
+   */
+  private async uploadQuiet(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    let since: string = op.params.uploadEndedAt ?? op.params.uploadSentAt;
+    if (new Date(since).getTime() > this.now().getTime()) {
+      since = this.now().toISOString();
+      await this.outbox.setParams(op.id, { uploadEndedAt: since });
+    }
+    const quietUntil = new Date(new Date(since).getTime() + CREATE_QUIET_WINDOW_MS);
+    if (quietUntil.getTime() > this.now().getTime()) {
+      throw new OutboxRetryLaterError(
+        `The previous upload may still be running on ${creds.odooUrl}; retry after ${quietUntil.toISOString()}.`,
+        quietUntil.toISOString(),
+      );
+    }
+  }
+
+  /**
+   * The pending attachment a lost upload made, or null: the user's own
+   * placeholder rows (res_model mail.compose.message, res_id 0, as Odoo's
+   * route stores them) of the same name created between uploadSentAt −
+   * CREATE_CLOCK_SKEW_MS and (uploadEndedAt, or now) + CREATE_CLOCK_SKEW_MS,
+   * the oldest first. The size must match too, except for the image types
+   * Odoo's route may resize (foundByNameAlone): those are stored
+   * re-encoded at another size. An attachment another file of this phone
+   * already holds (state "uploaded") is never taken again; two uploads
+   * this search cannot tell apart are never in doubt at once (pumpUploads
+   * orders twins).
+   */
+  private async findUploaded(
+    creds: SyncCredentials,
+    op: OutboxOp,
+  ): Promise<{ id: number; checksum: string; size: number; mimetype: string; name: string } | null> {
+    const { uid } = await this.rpc.sessionInfo(creds);
+    const taken = await this.repo.uploadedIds(op.configId);
+    const sentAt = new Date(op.params.uploadSentAt).getTime();
+    const endedAt = op.params.uploadEndedAt ? new Date(op.params.uploadEndedAt).getTime() : this.now().getTime();
+    const found = (await this.rpc.searchRead<any>(
+      creds,
+      "ir.attachment",
+      [
+        ["res_model", "=", PENDING_MODEL],
+        ["res_id", "=", 0],
+        ["create_uid", "=", uid],
+        ["name", "=", op.params.name],
+        ...(foundByNameAlone(op) ? [] : [["file_size", "=", op.params.size]]),
+        ["create_date", ">=", odooDate(new Date(sentAt - CREATE_CLOCK_SKEW_MS))],
+        ["create_date", "<=", odooDate(new Date(endedAt + CREATE_CLOCK_SKEW_MS))],
+      ],
+      ["id", "name", "mimetype", "file_size", "checksum"],
+      { order: "id asc", limit: 1 + taken.size },
+    )).filter((a) => typeof a.id === "number" && !taken.has(a.id));
+    const a = found[0];
+    if (!a) return null;
+    return {
+      id: a.id,
+      checksum: a.checksum || "",
+      size: typeof a.file_size === "number" ? a.file_size : op.params.size,
+      mimetype: a.mimetype || op.params.mimetype,
+      name: a.name || op.params.name,
+    };
+  }
+
+  /**
+   * A file of a reply the record refused (the upload route's `reason`):
+   * its row turns "refused" with it and the op ends, with no file notice:
+   * the reply blocks on it (sendRecordPost) and its notice keeps the file.
+   */
+  private async refuseRecordFile(op: OutboxOp, reason: "refused" | "not_found"): Promise<void> {
+    await this.repo.setRefused(op.configId, op.params.localUuid, reason);
+    this.changed(op.configId, null);
+  }
+
+  /** The file of a conversation being left: refused "left", no notice; the op ends. */
+  private async refuseLeft(op: OutboxOp): Promise<void> {
+    await this.repo.setRefused(op.configId, op.params.localUuid, "left");
+    this.changed(op.configId, op.params.channelId);
+  }
+
+  /**
+   * Refuses a file for good: its row turns "refused" with the reason, a
+   * CHAT_FILE_REFUSED notice (blocked, until dismissed) names it, and the
+   * op ends, so its post goes without it. A file of a reply on a record
+   * names the record in its notice (label), no conversation standing for it.
+   */
+  private async refuseFile(op: OutboxOp, reason: FileRefusal, limit?: number): Promise<void> {
+    const { configId } = op;
+    const { channelId, localUuid, name } = op.params;
+    const thread: RecordThread | undefined = op.params.thread;
+    await this.repo.setRefused(configId, localUuid, reason);
+    // Written blocked in one statement: no drain ever sees it queued
+    await this.outbox.enqueue({
+      noteId: CHAT_NOTE,
+      configId,
+      kind: CHAT_FILE_REFUSED,
+      params: {
+        channelId, localUuid, name, reason, ...(limit ? { limit } : {}), ...(thread ? { label: thread.recordName } : {}),
+        blockedReason: "refused", candidates: [],
+      },
+      status: "blocked",
+      lastError: `File ${name} not sent: ${reason}.`,
+    });
+    this.changed(configId, channelId);
+  }
+
+  private runCreate(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, (running) => this.sendCreate(creds, running));
+  }
+
+  /**
+   * Creates the conversation: channel_get for a direct message (Odoo finds
+   * the existing chat again, so a repeat is safe), create_group or
+   * channel_create otherwise, with the op's client uuid in the context when
+   * the server module 1.1 dedupes creates (useModule). A send stamps
+   * createSentAt and a retry waits out the quiet window as a post does.
+   * Without the module, a retry after a send that may have reached the
+   * server first looks for the conversation by its fingerprint
+   * (findCreated) and adopts it. A refusal leaves the conversation listed
+   * as failed (failCreate); the op and what waits for it go.
+   */
+  private async sendCreate(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    const { channelId, partnerIds, name, groupId } = op.params;
+    const mode = op.params.mode as CreateMode;
+    const useModule = !!op.params.useModule;
+    // A pair stored by an earlier settle names the conversation: read it, no window to wait out, no search
+    const own = await this.repo.realIdOf(op.configId, channelId);
+    if (own !== null) {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the create waits for the network.");
+      const store = await this.rpc.callWithAuth(creds, (sessionId) =>
+        this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/info", { channel_id: own }));
+      if (typeof store?.[CHANNEL_MODEL]?.[0]?.id !== "number") throw new Error("The conversation found cannot be read.");
+      await this.settleCreate(op, own, store);
+      return;
+    }
+    const sentAt = await this.quietStamp(creds, op);
+
+    let result: any = null;
+    try {
+      if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the create waits for the network.");
+      if (op.attempts > 1 && sentAt && mode !== "dm" && !useModule) result = await this.findCreated(creds, op, sentAt);
+      if (result === null) {
+        await this.outbox.setParams(op.id, { createSentAt: this.now().toISOString() });
+        const context = useModule ? { context: { erplibre_client_uuid: op.clientUuid } } : {};
+        if (mode === "dm") {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_get", [], { partners_to: partnerIds });
+        } else if (mode === "group") {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "create_group", [], {
+            partners_to: partnerIds,
+            ...(name ? { name } : {}),
+            ...context,
+          });
+        } else {
+          result = await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_create", [name, groupId], context);
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        await this.outbox.setParams(op.id, { createSentAt: sentAt ?? null });
+        throw e;
+      }
+      if (!isRefused(e)) throw e;
+      await this.failCreate(op.configId, channelId);
+      await this.outbox.cancel(op.id);
+      throw new OutboxBlockedError((e as Error).message, "refused", [], op.kind, op.id);
+    }
+    const realId = result?.[CHANNEL_MODEL]?.[0]?.id;
+    // The server may have created it: a retry finds it again
+    if (typeof realId !== "number") throw new Error("The create answer holds no channel.");
+    await this.settleCreate(op, realId, result);
+  }
+
+  /**
+   * The Store of the conversation a lost create made, or null when there is
+   * none. Searches the user's own member conversations of the op's type
+   * created between createSentAt − CREATE_CLOCK_SKEW_MS and createSentAt +
+   * CREATE_QUIET_WINDOW_MS + CREATE_CLOCK_SKEW_MS (the send cannot have run
+   * later), the name too when the op has one; a group must also have
+   * exactly the op's people plus self as members, compared on every hit
+   * (no limit before the filter). A conversation another create of this
+   * phone already settled on is never taken again; the one this create's
+   * own pair names is. Two matches block the op
+   * ("ambiguous", their ids as candidates); one is read through
+   * /discuss/channel/info.
+   */
+  private async findCreated(creds: SyncCredentials, op: OutboxOp, sentAt: string): Promise<any | null> {
+    const mode = op.params.mode as CreateMode;
+    const info = await this.rpc.sessionInfo(creds);
+    // Without self the member sets never match, and the create would be sent again
+    if (!info.partnerId) throw new Error("The partner of the session is unknown.");
+    const sent = new Date(sentAt).getTime();
+    const domain: any[] = [
+      ["create_uid", "=", info.uid],
+      ["channel_type", "=", TYPE_OF[mode]],
+      ["create_date", ">=", odooDate(new Date(sent - CREATE_CLOCK_SKEW_MS))],
+      ["create_date", "<=", odooDate(new Date(sent + CREATE_QUIET_WINDOW_MS + CREATE_CLOCK_SKEW_MS))],
+      ["is_member", "=", true],
+    ];
+    if (op.params.name) domain.push(["name", "=", op.params.name]);
+    let found = await this.rpc.searchRead<{ id: number; channel_partner_ids: number[] }>(
+      creds, CHANNEL_MODEL, domain, ["id", "channel_partner_ids"],
+    );
+    const adopted = await this.repo.adoptedIds(op.configId);
+    // The one this create already settled on stays its own: a kill came between the pair and the swap
+    const own = await this.repo.realIdOf(op.configId, op.params.channelId);
+    found = found.filter((c) => !adopted.has(c.id) || c.id === own);
+    if (mode === "group") {
+      const wanted = new Set<number>([...(op.params.partnerIds ?? []), info.partnerId]);
+      found = found.filter((c) => {
+        const has = new Set(c.channel_partner_ids ?? []);
+        return has.size === wanted.size && [...wanted].every((id) => has.has(id));
+      });
+    }
+    if (found.length > 1) {
+      throw new OutboxBlockedError(
+        `Several conversations match the create ${op.clientUuid}.`,
+        "ambiguous",
+        found.map((c) => c.id),
+        op.kind,
+        op.id,
+      );
+    }
+    if (found.length === 0) return null;
+    const store = await this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/info", { channel_id: found[0].id }));
+    if (typeof store?.[CHANNEL_MODEL]?.[0]?.id !== "number") throw new Error("The conversation found cannot be read.");
+    return store;
+  }
+
+  /**
+   * Writes a settled create or join in the account's queue of counter
+   * writers (serial): the server's Store first, then the pair stored in
+   * chat_temp_ids, then the temporary id swapped for the server's
+   * (ChatRepository.swapChannelId, exclusive of a post being queued), then
+   * `created`. Stored first, the pair outlives a kill before the swap: the
+   * create's retry finds its own conversation again (findCreated) and
+   * swaps. An op no longer stored (its account erased, the conversation
+   * given up meanwhile) writes nothing.
+   */
+  private settleCreate(op: OutboxOp, realId: number, result: any): Promise<void> {
+    return this.serial(op.configId, async () => {
+      const { configId } = op;
+      if (!(await this.db.getOutboxOp(op.id))) return;
+      const tempId: number = op.params.channelId;
+      const self = (await this.repo.sourceState(configId)).selfPartnerId;
+      await this.repo.applyDelta(configId, parseStore(result, configId, self));
+      await this.exclusive(configId, async () => {
+        const leftUnsent = !!(await this.repo.channel(configId, tempId))?.leftUnsent;
+        // Stored before the swap rewrites the op's channelId: a kill between the two still names the pair
+        if (tempId !== realId) await this.repo.rememberRealId(configId, tempId, realId);
+        await this.repo.swapChannelId(configId, tempId, realId);
+        // The server's row won the swap: what the phone queued since (a name, a mute, a leave) shows again
+        const own: StoreDelta = { ...emptyDelta(), channels: [{ channelId: realId }] };
+        await this.overlayPending(configId, own);
+        const { channelId: _id, ...patch } = own.channels[0];
+        await this.repo.patchChannel(configId, realId, {
+          ...patch,
+          ...(leftUnsent ? { leftUnsent: true } : {}),
+          ...(patch.isMember === false ? { localPinned: false } : {}),
+        });
+      });
+      this.created(configId, tempId, realId);
+    });
+  }
+
+  /**
+   * Joins a public channel through /discuss/channel/join, which adds self
+   * only when missing, so a repeat is safe. A channel the user cannot reach
+   * (NotFound, access) is given up as a refused create is.
+   */
+  private runJoin(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const { channelId } = running.params;
+      let result: any;
+      try {
+        if (!(await this.isOnline())) throw new RequestNotSentError("Offline: the join waits for the network.");
+        result = await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/join", { channel_id: channelId }));
+      } catch (e: unknown) {
+        if (!isRefused(e)) throw e;
+        await this.failCreate(running.configId, channelId);
+        await this.outbox.cancel(running.id);
+        throw new OutboxBlockedError((e as Error).message, "refused", [], running.kind, running.id);
+      }
+      await this.settleCreate(running, channelId, result);
+    });
+  }
+
+  /**
+   * Sends one action with the params stored when it starts (a value
+   * written into the op until then goes out). An action of a conversation
+   * the user is leaving, or left with texts unsent, is dropped. A
+   * conversation gone, created on the phone only, refused, or one the user
+   * is no longer a member of for an action Odoo would join them for
+   * (MEMBER_ONLY) is not sent: the op is given up as "vanished"; an action
+   * of the whole account (ACCOUNT_KINDS) has no conversation to check. A refusal
+   * (REFUSED_ERRORS, or AttributeError for a call of the module,
+   * MODULE_ONLY, after which the module state is probed again) gives it up
+   * as "refused". Given up, it stays blocked in the outbox as a notice
+   * (notices) until dismissed, unless a later op of the same action
+   * supersedes it. A refused leave also clears leftUnsent: the next load
+   * shows the membership the server kept.
+   */
+  private runAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const act: OutboxOp = { ...running, params: (await this.db.getOutboxOp(running.id))?.params ?? running.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      const channelId: number | null = act.params.channelId ?? null;
+      const channel = channelId === null ? null : await this.repo.channel(act.configId, channelId);
+      if (act.kind !== CHAT_LEAVE && !ACCOUNT_KINDS.has(act.kind)) {
+        // Running when the user left, and retried since: dropped with the rest of the conversation
+        if (await this.leaving(act.configId, channelId!)) return;
+        const gone = !channel || channelId! <= 0 || channel.createFailed
+          || (MEMBER_ONLY.has(act.kind) && !channel.isMember);
+        if (gone) return this.giveUp(act, "vanished", `The conversation of ${act.kind} is gone or no longer the user's.`);
+      }
+      try {
+        await this.sendAction(creds, act, channel);
+      } catch (e: unknown) {
+        const moduleMissing = MODULE_ONLY.has(act.kind) && e instanceof OdooRpcError && e.odooName === "builtins.AttributeError";
+        if (!isRefused(e) && !moduleMissing) throw e;
+        if (moduleMissing) {
+          try {
+            await this.moduleRefused(act.configId);
+          } catch (probe) {
+            console.warn("chat: module probe after a refusal failed", probe);
+          }
+        }
+        if (act.kind === CHAT_LEAVE && channel) await this.repo.patchChannel(act.configId, channelId!, { leftUnsent: false });
+        return this.giveUp(act, "refused", (e as Error).message);
+      }
+      if (act.kind === CHAT_LEAVE) this.left(act.configId, channelId!);
+      if (act.kind === CHAT_REMOVE) {
+        await this.repo.dropMember(act.configId, channelId!, act.params.partnerId);
+        this.changed(act.configId, channelId);
+      }
+    });
+  }
+
+  private async sendAction(creds: SyncCredentials, op: OutboxOp, channel: { channelType: ChannelType } | null): Promise<void> {
+    const p = op.params;
+    const cid: number = p.channelId;
+    const settings = (route: string, params: Record<string, any>) => this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, `/discuss/settings/${route}`, params));
+    const mute = (params: Record<string, any>) => settings("mute", params);
+    switch (op.kind) {
+      case CHAT_INVITE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "add_members", [[cid]], { partner_ids: p.partnerIds });
+        return;
+      case CHAT_RENAME:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, channel?.channelType === "chat" ? "channel_set_custom_name" : "channel_rename",
+          [[cid]], { name: p.name });
+        return;
+      case CHAT_DESCRIBE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_change_description", [[cid]], { description: p.description });
+        return;
+      case CHAT_LEAVE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "action_unfollow", [cid]);
+        return;
+      case CHAT_HIDE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "channel_pin", [cid], { pinned: false });
+        return;
+      case CHAT_MUTE:
+        await mute({ minutes: muteMinutes(p.until ?? null, this.now()), channel_id: cid });
+        return;
+      case CHAT_GLOBAL_MUTE:
+        await mute({ minutes: muteMinutes(p.until ?? null, this.now()) });
+        return;
+      // The route answers no result. A member takes "mentions"; false is the default (the general setting)
+      case CHAT_NOTIFY:
+        await settings("custom_notifications", { custom_notifications: p.value ?? false, channel_id: cid });
+        return;
+      // The general setting stores "mentions" as false: the string is an invalid selection value there
+      case CHAT_GLOBAL_NOTIFY:
+        await settings("custom_notifications", { custom_notifications: p.value === "mentions" ? false : p.value });
+        return;
+      case CHAT_REMOVE:
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "erplibre_remove_member", [[cid], p.partnerId]);
+        return;
+    }
+  }
+
+  /**
+   * Sends one action on a message with the params stored when it starts.
+   * Offline it waits (RequestNotSentError); an action of a conversation the
+   * user is leaving, or left with texts unsent, is dropped. The message is
+   * the cached one (messageOf: its server id, else its post's client
+   * uuid): one no longer cached or still pending with its post gone is not
+   * sent, given up as "vanished", and so is a reaction or a pin on a message
+   * emptied (isEmptyMessage: deleted in Discuss); an edit or a delete is
+   * shown in the cache already, so the server decides for them. One whose
+   * post still waits holds the action (a plain error, retried). A row gone
+   * when the handler reads it was cancelled: nothing is sent. The send
+   * stamps sentAt first, given back when the request provably never left
+   * (RequestNotSentError). The server's NotFound or MissingError gives it
+   * up as "vanished", another refusal as "refused" (giveUpMessage); an edit
+   * the server's body no longer allows (EditConflictError) as "changed",
+   * the server's body written to the cache first. The answer's Store is
+   * applied with the actions still queued laid over it (overlayMessages,
+   * this op left out), in the account's queue of server writers (serial);
+   * an answered edit is the base of the next edit of its message.
+   */
+  private runMessageAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const stored = await this.db.getOutboxOp(running.id);
+      // Cancelled as it started (a tap back to where the server stood): nothing to send
+      if (!stored) return;
+      const act: OutboxOp = { ...running, params: stored.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      const { configId } = act;
+      const channelId: number = act.params.channelId;
+      if (await this.leaving(configId, channelId)) return;
+      const message = await this.repo.messageOf(configId, targetOf(act));
+      if (message && message.messageId === null && message.outboxOpId && (await this.db.getOutboxOp(message.outboxOpId))) {
+        throw new Error(`${act.kind} waits for the post of its message.`);
+      }
+      const messageId = message?.messageId ?? null;
+      // A reaction or a pin goes only on a message that still shows: Odoo's pin would take an emptied one
+      const shownOnly = act.kind === CHAT_REACTION || act.kind === CHAT_PIN;
+      const files = messageId === null || !shownOnly ? 0
+        : (await this.repo.attachmentsOf(configId, message!.channelId, [messageId], [])).get(`m${messageId}`)?.length ?? 0;
+      if (messageId === null || (shownOnly && isEmptyMessage(message!.body, files))) {
+        return this.giveUpMessage(act, "vanished", `The message of ${act.kind} is gone.`);
+      }
+      // The message id: a notice names the message the server knows. sentAt: from now on the server may hold this
+      // value, so a tap back is sent rather than taken for a no-op (queueAction)
+      const sentAt: string | null = act.params.sentAt ?? null;
+      await this.outbox.setParams(act.id, { messageId, sentAt: this.now().toISOString() });
+      let result: any;
+      try {
+        result = await this.sendMessageAction(creds, act, messageId);
+      } catch (e: unknown) {
+        if (e instanceof RequestNotSentError) {
+          // Nothing of this attempt reached the server: the stamp goes back to the earlier one
+          await this.outbox.setParams(act.id, { sentAt });
+          throw e;
+        }
+        if (e instanceof EditConflictError) {
+          // The follow-ups go first: the server's body is written with nothing of theirs laid over it
+          const latest = await this.takeFollowUps(act);
+          await this.serial(configId, () => this.applyConflict(act, messageId, e));
+          await this.outbox.setParams(act.id, { conflict: e.conflict, ...latest });
+          return this.giveUpMessage(act, "changed", e.message);
+        }
+        if (isVanished(e)) return this.giveUpMessage(act, "vanished", (e as Error).message);
+        if (!isRefused(e)) throw e;
+        if (act.kind === CHAT_DELETE && act.params.editSent) {
+          // An edit it cancelled may have been written: the message shows again as the server holds it
+          const body = await this.serverBody(creds, messageId).catch(() => null);
+          if (body !== null) return this.giveUpMessage({ ...act, params: { ...act.params, baseBody: body } }, "refused", (e as Error).message);
+        }
+        return this.giveUpMessage(act, "refused", (e as Error).message);
+      }
+      await this.serial(configId, async () => {
+        // Its account erased while the request was on the wire: nothing is written
+        if (!(await this.db.getOutboxOp(act.id)) || result == null) return;
+        const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+        const answered = delta.messages.find((m) => m.messageId === messageId)?.body;
+        if (act.kind === CHAT_EDIT && answered !== undefined) {
+          await this.rebaseEdits(act, { ...targetOf(act), messageId }, answered);
+        }
+        await this.overlayMessages(configId, delta, act.id);
+        await this.repo.applyDelta(configId, delta);
+      });
+      this.changed(configId, channelId);
+    });
+  }
+
+  /**
+   * The edits of `op`'s message waiting behind it, refused with it: they
+   * were made against the same body. They leave the outbox, and the newest
+   * text and picks are returned for `op` to keep, so one notice holds the
+   * text the user wrote last; {} when none waits.
+   */
+  private async takeFollowUps(op: OutboxOp): Promise<{ text?: string; mentions?: Mentions }> {
+    const waiting = dependencyOrder(await this.db.getOutboxOpsForConfig(op.configId)).filter((o) => o.id !== op.id
+      && o.kind === CHAT_EDIT && o.status !== "running" && o.status !== "blocked" && sameTarget(targetOf(o), targetOf(op)));
+    for (const o of waiting) await this.outbox.cancel(o.id);
+    const last = waiting.at(-1);
+    return last ? { text: last.params.text, mentions: last.params.mentions ?? EMPTY_MENTIONS } : {};
+  }
+
+  /** The edits of `target` still to be sent after `op` are made against `body`, the server's answer to it. */
+  private async rebaseEdits(op: OutboxOp, target: MessageTarget, body: string): Promise<void> {
+    for (const o of await this.db.getOutboxOpsForConfig(op.configId)) {
+      if (o.id === op.id || o.kind !== CHAT_EDIT || o.status === "running" || o.status === "blocked") continue;
+      if (sameTarget(targetOf(o), target)) await this.outbox.setParams(o.id, { baseBody: body });
+    }
+  }
+
+  /**
+   * The server's message as a refused edit found it, written to the cache
+   * with the actions still queued laid over it (this op left out): the
+   * guarded route's Store, or the body re-read ("" when the message is no
+   * longer there).
+   */
+  private async applyConflict(op: OutboxOp, messageId: number, e: EditConflictError): Promise<void> {
+    const { configId } = op;
+    if (!(await this.db.getOutboxOp(op.id))) return;
+    const delta = e.store
+      ? parseStore(e.store, configId, (await this.repo.sourceState(configId)).selfPartnerId)
+      : { ...emptyDelta(), messages: [{ messageId, body: e.body ?? "" }] };
+    await this.overlayMessages(configId, delta, op.id);
+    await this.repo.applyDelta(configId, delta);
+  }
+
+  /**
+   * Sends one action on the message `messageId`; resolves with the
+   * server's answer (a Store), or null when there is nothing to apply. A
+   * delete is Odoo's: the body, the attachments and the subject emptied; a
+   * message already gone (NotFound) counts as deleted. A pin answers
+   * nothing: set_message_pin returns no record.
+   */
+  private async sendMessageAction(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
+    const p = op.params;
+    const route = (path: string, params: Record<string, any>) => this.rpc.callWithAuth(creds, (sessionId) =>
+      this.rpc.jsonRoute(creds.odooUrl, sessionId, path, params));
+    switch (op.kind) {
+      case CHAT_REACTION:
+        return route("/mail/message/reaction", { message_id: messageId, content: p.content, action: p.action });
+      case CHAT_EDIT:
+        return this.sendEdit(creds, op, messageId);
+      case CHAT_DELETE:
+        try {
+          return await route(ODOO_EDIT_ROUTE, { message_id: messageId, body: "", attachment_ids: [], attachment_tokens: [], subject: "" });
+        } catch (e: unknown) {
+          if (isVanished(e)) return null;
+          throw e;
+        }
+      case CHAT_PIN:
+        // Idempotent: a message already in that state is left as it is; its pin notice comes through the bus
+        await this.rpc.callKw(creds, CHANNEL_MODEL, "set_message_pin", [[p.channelId]], { message_id: messageId, pinned: !!p.pinned });
+        return null;
+    }
+    throw new Error(`No sender for ${op.kind}.`);
+  }
+
+  /** The body the server holds for a message: "" when emptied, null when it is gone. */
+  private async serverBody(creds: SyncCredentials, messageId: number): Promise<string | null> {
+    const rows = await this.rpc.searchRead<{ id: number; body: string | false }>(
+      creds, "mail.message", [["id", "=", messageId]], ["body"]);
+    return rows.length > 0 ? (rows[0].body || "") : null;
+  }
+
+  /**
+   * Sends an edit as the browser does (D5): the composer's HTML
+   * (composeBody), its partner ids, `attachment_ids: null` (the
+   * attachments stay). The body it is made against is baseBody, else (its
+   * post's answer never read) the server's body read now, taken only while
+   * it is still the post's (postBody: otherwise "changed"). With editGuard
+   * the module's route writes only when the server's body still has that
+   * body's fingerprint; it answers erplibre_conflict with the message
+   * otherwise. Without it the body and the attachments are re-read just
+   * before Odoo's route: a missing or empty message (isEmptyMessage: no
+   * text and no file) is "deleted", another body "changed".
+   * A server body that reads as the text this edit sends (the edited span
+   * and the paragraph aside: bodyText) is this edit already written, an
+   * answer lost, or nothing to change: done, without a write. Any other
+   * conflict throws EditConflictError. A plain 404 of the module's route (the module gone
+   * or older) probes the module (moduleRefused) and throws a plain error:
+   * the retry takes the route the probe leaves.
+   */
+  private async sendEdit(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
+    const p = op.params;
+    const composed = composeBody(p.text ?? "", p.mentions ?? EMPTY_MENTIONS, await emojiConversions());
+    const sends = bodyText(composed.body);
+    const values = { message_id: messageId, body: composed.body, attachment_ids: null, partner_ids: composed.partnerIds };
+    const guarded = await this.editGuard(op.configId);
+    let baseBody: string | null = p.baseBody ?? null;
+    if (!guarded || baseBody === null) {
+      const rows = await this.rpc.searchRead<{ id: number; body: string | false; attachment_ids: number[] }>(
+        creds, "mail.message", [["id", "=", messageId]], ["body", "attachment_ids"]);
+      const server = rows.length > 0 ? (rows[0].body || "") : null;
+      if (server !== null && bodyText(server) === sends) return { "mail.message": [{ id: messageId, body: server }] };
+      if (server === null || isEmptyMessage(server, (rows[0].attachment_ids ?? []).length)) {
+        throw new EditConflictError("deleted", null, server);
+      }
+      if (baseBody === null) {
+        // The post's answer never read: the body read now is the base only while it is still the post's
+        if (!postBody(op, server)) throw new EditConflictError("changed", null, server);
+        baseBody = server;
+        await this.outbox.setParams(op.id, { baseBody });
+      } else if (server !== baseBody) {
+        throw new EditConflictError("changed", null, server);
+      }
+      if (!guarded) return this.rpc.callWithAuth(creds, (sessionId) => this.rpc.jsonRoute(creds.odooUrl, sessionId, ODOO_EDIT_ROUTE, values));
+    }
+    const expected = await bodyFingerprint(baseBody);
+    const result = await this.rpc.callWithAuth(creds, async (sessionId) => {
+      try {
+        return await this.rpc.jsonRoute(creds.odooUrl, sessionId, MODULE_EDIT_ROUTE, { ...values, expected_fingerprint: expected });
+      } catch (e: unknown) {
+        if (Object.getPrototypeOf(e) === Error.prototype && /^HTTP 404\b/.test((e as Error).message)) {
+          throw new RouteMissingError((e as Error).message);
+        }
+        throw e;
+      }
+    }).catch(async (e: unknown) => {
+      if (!(e instanceof RouteMissingError)) throw e;
+      try {
+        await this.moduleRefused(op.configId);
+      } catch (probe) {
+        console.warn("chat: module probe after a missing edit route failed", probe);
+      }
+      throw new Error(`The guarded edit route is missing on ${creds.odooUrl}: ${e.message}`);
+    });
+    if (!result?.erplibre_conflict) return result;
+    const server = parseStore(result, op.configId, null).messages.find((m) => m.messageId === messageId)?.body ?? "";
+    if (bodyText(server) === sends) return result;
+    throw new EditConflictError(result.erplibre_conflict === "deleted" ? "deleted" : "changed", result, null);
+  }
+
+  /**
+   * Sends one action of the account on a message (MAILBOX_KINDS) with the
+   * params stored when it starts; a row gone when the handler reads it was
+   * cancelled: nothing is sent. Offline it waits (RequestNotSentError). A
+   * cached channel message emptied (isEmptyMessage: deleted in Discuss) is
+   * not starred: given up as "vanished". The send stamps sentAt first,
+   * given back when the request provably never left or the module's method
+   * is missing. With starIdempotent the module's erplibre_set_starred sets
+   * the target; an AttributeError (the module gone) probes the module
+   * again (moduleRefused) and fails the attempt for a plain retry, which
+   * re-reads. Without it the server's flag is read first, on every
+   * attempt, a replay after a lost answer included: no row means the
+   * message is gone ("vanished"), and Odoo's toggle goes only when the
+   * flag differs from the target. NotFound or MissingError gives the op up
+   * as "vanished", another refusal (AccessError) as "refused" (giveUpStar).
+   * The answer's Store is applied with the stars still queued laid over it
+   * (overlayMessages), in the account's queue of server writers (serial)
+   * and in one exclusive() task with that overlay. An inbox op goes
+   * through runInbox.
+   */
+  private runMailboxAction(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      const stored = await this.db.getOutboxOp(running.id);
+      if (!stored) return;
+      const act: OutboxOp = { ...running, params: stored.params };
+      if (!(await this.isOnline())) throw new RequestNotSentError(`Offline: ${act.kind} waits for the network.`);
+      if (INBOX_KINDS.includes(act.kind)) return this.runInbox(creds, act);
+      const { configId } = act;
+      const messageId: number = act.params.messageId;
+      const message = await this.repo.message(configId, messageId);
+      if (message) {
+        const files = (await this.repo.attachmentsOf(configId, message.channelId, [messageId], [])).get(`m${messageId}`)?.length ?? 0;
+        if (isEmptyMessage(message.body, files)) return this.giveUpStar(act, "vanished", `The message of ${act.kind} is gone.`);
+      }
+      const sentAt: string | null = act.params.sentAt ?? null;
+      await this.outbox.setParams(act.id, { sentAt: this.now().toISOString() });
+      let result: any;
+      try {
+        result = await this.sendStar(creds, act, messageId);
+      } catch (e: unknown) {
+        const moduleMissing = e instanceof OdooRpcError && e.odooName === "builtins.AttributeError";
+        // Nothing of this attempt changed the server: the stamp goes back to the earlier one
+        if (e instanceof RequestNotSentError || moduleMissing) await this.outbox.setParams(act.id, { sentAt });
+        if (moduleMissing) {
+          try {
+            await this.moduleRefused(configId);
+          } catch (probe) {
+            console.warn("chat: module probe after a refusal failed", probe);
+          }
+          throw new Error(`${act.kind}: the module's set is missing, retried without it.`);
+        }
+        if (e instanceof RequestNotSentError) throw e;
+        if (e instanceof StarTargetGoneError || isVanished(e)) return this.giveUpStar(act, "vanished", (e as Error).message);
+        if (!isRefused(e)) throw e;
+        return this.giveUpStar(act, "refused", (e as Error).message);
+      }
+      await this.serial(configId, async () => {
+        // Its account erased while the request was on the wire: nothing is written
+        if (!(await this.db.getOutboxOp(act.id)) || result == null) return;
+        const delta = parseStore(result, configId, (await this.repo.sourceState(configId)).selfPartnerId);
+        await this.exclusive(configId, async () => {
+          await this.overlayMessages(configId, delta, act.id);
+          await this.repo.applyDelta(configId, delta);
+        });
+      });
+      this.changed(configId, act.params.channelId ?? null);
+    });
+  }
+
+  /**
+   * Sends an inbox op as stored: set_message_done of its ids, or
+   * mark_all_as_read of the needaction messages at or below its bound.
+   * Both are idempotent and answer no Store. The send stamps sentAt first,
+   * given back when the request provably never left; from then the
+   * overlay of a server count no longer takes its cleared ids off. Once
+   * the server took it, the ids it covers leave the cleared of every
+   * waiting inbox op, its own included (forgetCleared), and the counters
+   * are read again (inboxSent): the bus (mail.message/mark_as_read) speaks
+   * only for the items the call changed, so an item read elsewhere
+   * meanwhile, taken off a server count that no longer held it, would
+   * leave the count one low. A failure of that read leaves the counts to
+   * the next load or bus event. A refusal gives the op up as "refused", a
+   * message gone (MissingError) as "vanished" (giveUpInbox).
+   */
+  private async runInbox(creds: SyncCredentials, act: OutboxOp): Promise<void> {
+    const sentAt: string | null = act.params.sentAt ?? null;
+    await this.outbox.setParams(act.id, { sentAt: this.now().toISOString() });
+    try {
+      if (act.kind === CHAT_INBOX_DONE) {
+        await this.rpc.callKw(creds, "mail.message", "set_message_done", [act.params.messageIds ?? []]);
+      } else {
+        await this.rpc.callKw(creds, "mail.message", "mark_all_as_read", [[["needaction", "=", true], ["id", "<=", act.params.maxId]]]);
+      }
+    } catch (e: unknown) {
+      if (e instanceof RequestNotSentError) {
+        await this.outbox.setParams(act.id, { sentAt });
+        throw e;
+      }
+      if (isVanished(e)) return this.giveUpInbox(act, "vanished", (e as Error).message);
+      if (!isRefused(e)) throw e;
+      return this.giveUpInbox(act, "refused", (e as Error).message);
+    }
+    // The server holds what the op covers read: no waiting op's cleared counts it any more, this one's included
+    const ids = new Set<number>(act.params.messageIds ?? []);
+    const maxId: number = act.kind === CHAT_INBOX_ALL ? act.params.maxId ?? 0 : 0;
+    await this.exclusive(act.configId, () => this.forgetCleared(act.configId, (id) => ids.has(id) || id <= maxId));
+    try {
+      await this.inboxSent(act.configId);
+    } catch (e: unknown) {
+      console.warn("chat: counters not read again after an inbox op", e);
+    }
+    this.changed(act.configId, null);
+  }
+
+  /**
+   * Gives an inbox op up (giveUp), its cleared rows put back as the server
+   * still holds them: in the inbox again (needaction on, history off),
+   * inboxCounter one higher per row and a cached channel's
+   * needactionCounter one higher per mention of it, as showDone lowered
+   * them. A row another waiting inbox op covers stays where it is, that op
+   * counting it. The restore and the blocked mark in one exclusive() task
+   * (giveUpRestoring), as the other counter writers.
+   */
+  private async giveUpInbox(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const { configId } = op;
+    return this.giveUpRestoring(op, reason, message, async () => {
+      const cleared: number[] = (await this.db.getOutboxOp(op.id))?.params.cleared ?? [];
+      const { covers } = await this.inboxWaiting(configId, op.id);
+      const back: ChatMailboxItem[] = [];
+      for (const id of cleared) {
+        if (covers(id)) continue;
+        const item = await this.repo.mailboxItem(configId, id);
+        if (item) back.push(item);
+      }
+      if (back.length === 0) return;
+      const perChannel = new Map<number, number>();
+      for (const item of back) {
+        await this.repo.patchMailbox(configId, item.messageId, { needaction: true, history: false });
+        if (item.threadModel === CHANNEL_MODEL) perChannel.set(item.threadId, (perChannel.get(item.threadId) ?? 0) + 1);
+      }
+      for (const [channelId, n] of perChannel) {
+        const channel = await this.repo.channel(configId, channelId);
+        if (channel) await this.repo.patchChannel(configId, channelId, { needactionCounter: channel.needactionCounter + n });
+      }
+      const { inboxCounter } = await this.repo.sourceState(configId);
+      await this.repo.setSourceState({ configId, inboxCounter: inboxCounter + back.length });
+      await this.outbox.setParams(op.id, { cleared: [] });
+    });
+  }
+
+  /**
+   * Sends a star (params.starred) of the message `messageId`; resolves
+   * with the server's answer (a Store), or null when the server already
+   * holds the target. Rejects with StarTargetGoneError when the re-read
+   * finds no message.
+   */
+  private async sendStar(creds: SyncCredentials, op: OutboxOp, messageId: number): Promise<any> {
+    const starred = !!op.params.starred;
+    if (await this.starIdempotent(op.configId)) {
+      return this.rpc.callKw(creds, "mail.message", "erplibre_set_starred", [[messageId], starred]);
+    }
+    // Odoo's toggle flips whatever the server holds: it goes only where the server differs from the target
+    const rows = await this.rpc.searchRead<{ id: number; starred: boolean }>(
+      creds, "mail.message", [["id", "=", messageId]], ["starred"]);
+    if (rows.length === 0) throw new StarTargetGoneError(`The message of ${op.kind} is gone.`);
+    if (!!rows[0].starred === starred) return null;
+    return this.rpc.callKw(creds, "mail.message", "toggle_message_starred", [[messageId]]);
+  }
+
+  /**
+   * Gives a star up (giveUpRestoring): with no later op of its message
+   * queued, the message shows again as the server held it (base), the
+   * counter following (showStar).
+   */
+  private async giveUpStar(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    return this.giveUpRestoring(op, reason, message, async () => {
+      if (!(await this.laterOfKey(op))) await this.showStar(op.configId, op.params.messageId, !!op.params.base);
+    });
+  }
+
+  /**
+   * Gives an action on a message up (giveUp). A reaction or a pin no later
+   * op of its key follows is shown again as the server held it (base, a
+   * pin at baseAt), through giveUpRestoring: the loads lay the queued
+   * reactions and pins over what they write. An edit or a delete with no
+   * other edit or delete of the message queued shows the message as the
+   * server has it, through giveUpRestoring too (the loads lay the queued
+   * edits and deletes over the bodies they write): hidden ("") when it
+   * vanished, as a re-read that finds no message leaves it; the body it
+   * was made against (baseBody) when refused. A conflict wrote the
+   * server's body already: a plain giveUp.
+   */
+  private async giveUpMessage(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const target = targetOf(op);
+    const shown = reason === "vanished" ? "" : reason === "refused" ? op.params.baseBody : undefined;
+    if ((op.kind === CHAT_EDIT || op.kind === CHAT_DELETE) && typeof shown === "string") {
+      return this.giveUpRestoring(op, reason, message, async () => {
+        const later = (await this.db.getOutboxOpsForConfig(op.configId)).some((o) => o.id !== op.id
+          && (o.kind === CHAT_EDIT || o.kind === CHAT_DELETE) && o.status !== "blocked" && sameTarget(targetOf(o), target));
+        if (!later) await this.showBody(op.configId, target, shown);
+      });
+    }
+    if (op.kind === CHAT_REACTION) {
+      return this.giveUpRestoring(op, reason, message, async () => {
+        if (!(await this.laterOfKey(op))) await this.showReaction(op.configId, target, op.params.content, !!op.params.base);
+      });
+    }
+    if (op.kind === CHAT_PIN && target.messageId !== null) {
+      const messageId = target.messageId;
+      return this.giveUpRestoring(op, reason, message, async () => {
+        if (!(await this.laterOfKey(op))) {
+          await this.showPin(op.configId, messageId, op.params.base ? op.params.baseAt ?? odooDate(this.now()) : null);
+        }
+      });
+    }
+    return this.giveUp(op, reason, message);
+  }
+
+  /** Whether an op of the same key (targetKey) other than `op`, not given up, is queued. */
+  private async laterOfKey(op: OutboxOp): Promise<boolean> {
+    const key = targetKey(op);
+    return (await this.db.getOutboxOpsForConfig(op.configId))
+      .some((o) => o.id !== op.id && o.status !== "blocked" && targetKey(o) === key);
+  }
+
+  /**
+   * giveUp with `restore` (the shown state put back as the server holds
+   * it) and the blocked mark written in one exclusive() task: a writer
+   * that lays the queued ops over its delta in its own exclusive() task
+   * finds the op waiting before the restore or blocked after it, never in
+   * between, so it never lays the op's target back over the restored state.
+   */
+  private async giveUpRestoring(op: OutboxOp, reason: ChatNotice["reason"], message: string, restore: () => Promise<void>): Promise<void> {
+    const blocked = await this.exclusive(op.configId, async () => {
+      await restore();
+      const e = await this.blockedOf(op, reason, message);
+      if (e) await this.outbox.markBlocked(op.id, e);
+      return e;
+    });
+    this.changed(op.configId, op.params.channelId ?? null);
+    if (blocked) throw blocked;
+  }
+
+  /**
+   * Gives an action up: blocked with its reason, as a notice, unless a
+   * later op of its key (targetKey: the same action, conversation, person
+   * removed, message and content) is queued, which supersedes it, or the
+   * conversation is being left: then it simply leaves the outbox. A notice
+   * of the key (blocked, e.g. a refused edit kept for « Reprendre »)
+   * supersedes nothing: this op becomes a notice of its own.
+   */
+  private async giveUp(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<void> {
+    const blocked = await this.blockedOf(op, reason, message);
+    this.changed(op.configId, op.params.channelId ?? null);
+    if (blocked) throw blocked;
+  }
+
+  /** The error giveUp throws for `op`; null when a later op of its key supersedes it or its conversation is being left. */
+  private async blockedOf(op: OutboxOp, reason: ChatNotice["reason"], message: string): Promise<OutboxBlockedError | null> {
+    if (await this.laterOfKey(op)) return null;
+    // An action of a conversation being left goes with it: a blocked one would hold the leave back
+    if (op.kind !== CHAT_LEAVE && op.params.channelId != null && (await this.leaving(op.configId, op.params.channelId))) return null;
+    return new OutboxBlockedError(message, reason, [], op.kind, op.id);
+  }
+
+  private runRead(creds: SyncCredentials, op: OutboxOp): Promise<void> {
+    return this.outbox.attempt(op.id, async (running) => {
+      // Covers a queueRead write that landed before the "running" mark; a later one finds the row running and queues a follow-up
+      const params = (await this.db.getOutboxOp(running.id))?.params ?? running.params;
+      const { channelId, lastMessageId, mentions } = params;
+      try {
+        await this.rpc.callWithAuth(creds, (sessionId) =>
+          this.rpc.jsonRoute(creds.odooUrl, sessionId, "/discuss/channel/mark_as_read", {
+            channel_id: channelId,
+            last_message_id: lastMessageId,
+          }));
+        if (mentions) {
+          // Bounded to the message read: a mention posted after it stays in the Inbox
+          await this.rpc.callKw(creds, "mail.message", "mark_all_as_read", [
+            [["model", "=", CHANNEL_MODEL], ["res_id", "=", channelId], ["id", "<=", lastMessageId]],
+          ]);
+        }
+      } catch (e: unknown) {
+        // A channel the user cannot reach any more has nothing left to mark
+        if (!isRefused(e)) throw e;
+      }
+    });
+  }
+}
